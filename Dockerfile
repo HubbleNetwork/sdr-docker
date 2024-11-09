@@ -26,9 +26,10 @@ RUN mkdir -p /root/.gnuradio/prefs && \
     echo "vmcircbuf_default_factory=shmem" > /root/.gnuradio/prefs/vmcircbuf_default_factory
 ENV HOME=/root
 
-# copy the setup.py, src/, and source_files/ to the container
 COPY setup.py /app/
+COPY test_tx.py /app/
 COPY src/ /app/src/ 
+COPY source_files/ /app/source_files/
 
 # Set up a working directory for your PlutoSDR scripts
 WORKDIR /app
