@@ -17,9 +17,8 @@ RUN wget https://github.com/analogdevicesinc/libiio/releases/download/v0.25/libi
     apt install -y ./libiio-0.25.gb6028fd-Linux-Ubuntu-20.04.deb && \
     rm libiio-0.25.gb6028fd-Linux-Ubuntu-20.04.deb
 
-# copy pluto_sdr_tx_cmdline_attn.py and all of the files in source_files/ to /app
-COPY pluto_sdr_tx_cmdline_attn.py /app/pluto_sdr_tx_cmdline_attn.py
-COPY source_files/ /app/source_files/
+# Install the Python dependencies
+RUN apt-get install -y python3-pip 
 
 # without these lines, you will get this error:
 # Uvmcircbuf_prefs::get :info: /root/.gnuradio/prefs/vmcircbuf_default_factory failed to open: bad true, fail true, eof true
@@ -27,5 +26,11 @@ RUN mkdir -p /root/.gnuradio/prefs && \
     echo "vmcircbuf_default_factory=shmem" > /root/.gnuradio/prefs/vmcircbuf_default_factory
 ENV HOME=/root
 
+# copy the setup.py, src/, and source_files/ to the container
+COPY setup.py /app/
+COPY src/ /app/src/ 
+
 # Set up a working directory for your PlutoSDR scripts
 WORKDIR /app
+
+RUN pip3 install .
