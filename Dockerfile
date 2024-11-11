@@ -28,6 +28,7 @@ ENV HOME=/root
 
 COPY setup.py /app/
 COPY test_tx.py /app/
+COPY flask_api.py /app/
 COPY src/ /app/src/ 
 COPY source_files/ /app/source_files/
 
@@ -35,3 +36,6 @@ COPY source_files/ /app/source_files/
 WORKDIR /app
 
 RUN pip3 install .
+
+EXPOSE 5000
+CMD ["python3", "flask_api.py"]

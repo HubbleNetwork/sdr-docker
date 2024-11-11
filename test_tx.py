@@ -51,11 +51,13 @@ elif args.num_symbols != "":
 
 # transmit a tone
 if args.file_name == "":
+    tx_type = "tone"
     pluto = pluto_tx.pluto_tx_tone(
         attenuation=args.attn, center_freq=args.freq, sample_rate=args.sample_rate
     )
 # transmit packets
 else:
+    tx_type = "packet"
     if not os.path.exists(args.file_name):
         print(f"File {args.file_name} does not exist")
         sys.exit(1)
@@ -68,4 +70,5 @@ else:
         multiple_packets=args.single_pkt,
     )
 
+print(f"Transmitting {tx_type} for {args.time:.2f} seconds")
 pluto.start(args.time)

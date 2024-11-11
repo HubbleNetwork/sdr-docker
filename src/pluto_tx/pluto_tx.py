@@ -66,19 +66,28 @@ class pluto_tx(gr.top_block):
         self.attn = attn
         self.iio_pluto_sink_0.set_attenuation(0, self.attn)
 
-    def start(self, dur: float = 1):
-        def sig_handler(sig=None, frame=None):
-            self.stop()
-            self.wait()
-            sys.exit(0)
+    def start(self, dur: float = 1, main=True):
+        """Start transmitting
 
-        signal.signal(signal.SIGINT, sig_handler)
-        signal.signal(signal.SIGTERM, sig_handler)
+        Args:
+            dur (float, optional): Duration to transmit for. Defaults to 1.
+            main (bool, optional): Flag for running in main thread, where SIGINT/SIGTERM will end the transmission early. Defaults to True.
+        """
+        if main:
+
+            def sig_handler(sig=None, frame=None):
+                self.stop()
+                self.wait()
+                sys.exit(0)
+
+            signal.signal(signal.SIGINT, sig_handler)
+            signal.signal(signal.SIGTERM, sig_handler)
+        print("Starting transmission")
         super().start()
         time.sleep(dur)
+        print("Finished transmission")
         self.stop()
         self.wait()
-        print(f"Finished transmission after {dur:.2f} seconds")
 
 
 class pluto_tx_tone(pluto_tx):
@@ -95,12 +104,7 @@ class pluto_tx_tone(pluto_tx):
         self.analog_const_source_x_0 = analog.sig_source_c(
             0, analog.GR_CONST_WAVE, 0, 1, 0
         )
-
         self.connect((self.analog_const_source_x_0, 0), (self.iio_pluto_sink_0, 0))
-
-    def start(self, dur: float = 1):
-        print(f"Starting tone transmission at {self.fc/1e6:.2f} MHz for {dur} seconds")
-        super().start(dur)
 
 
 class plut_tx_pkt(pluto_tx):
@@ -116,19 +120,9 @@ class plut_tx_pkt(pluto_tx):
     ):
         super().__init__(name, center_freq, sample_rate, attenuation, bandwidth)
 
-        self.multiple_packets = multiple_packets
-
         self.blocks_file_source_0 = blocks.file_source(
             gr.sizeof_gr_complex * 1, file_name, multiple_packets, 0, 0
         )
 
         self.blocks_file_source_0.set_begin_tag(pmt.PMT_NIL)
-
         self.connect((self.blocks_file_source_0, 0), (self.iio_pluto_sink_0, 0))
-
-    def start(self, dur: float = 1):
-        if self.multiple_packets:
-            print(f"Starting transmission of packets for {dur} seconds")
-        else:
-            print(f"Starting transmission of a single packet for {dur} seconds")
-        super().start(dur)
