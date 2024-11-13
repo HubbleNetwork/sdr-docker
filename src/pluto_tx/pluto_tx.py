@@ -93,3 +93,11 @@ class PlutoTX(gr.top_block):
         super().stop()
         self.wait()
         self.transmitting = False
+
+
+if __name__ == "__main__":
+    tb = PlutoTX()
+    tb.tone_mode()
+    tb.start()
+    time.sleep(5)
+    tb.stop()
