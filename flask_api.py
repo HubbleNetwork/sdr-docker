@@ -64,6 +64,11 @@ def ensure_rx_mode(f):
     return wrapper
 
 
+@app.route("/")
+def home():
+    return jsonify({"status": "Server is running"}), 200
+
+
 @app.route("/mode", methods=["POST"])
 def set_mode():
     mode = request.json.get("mode", "tx")
