@@ -75,6 +75,10 @@ class PlutoRX(gr.top_block):
         self.start()
         time.sleep(duration)
         self.stop()
+    
+    def __del__(self):
+        self.disconnect_all()
+        self.stop()
 
 
 if __name__ == "__main__":

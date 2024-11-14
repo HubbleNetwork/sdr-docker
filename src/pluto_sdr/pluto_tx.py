@@ -90,6 +90,10 @@ class PlutoTX(gr.top_block):
         super().stop()
         self.wait()
 
+    def __del__(self):
+        self.disconnect_all()
+        self.stop()
+
 
 if __name__ == "__main__":
     tb = PlutoTX()

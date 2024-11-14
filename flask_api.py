@@ -12,11 +12,18 @@ class PlutoManager:
         self.pluto = None
 
     def initialize(self, mode):
-        if self.is_initialized():
-            del self.pluto
+
         if mode == "tx":
+            if self.is_tx_mode():
+                return
+            if self.is_initialized():
+                del self.pluto
             self.pluto = pluto_sdr.PlutoTX()
         elif mode == "rx":
+            if self.is_rx_mode():
+                return
+            if self.is_initialized():
+                del self.pluto
             self.pluto = pluto_sdr.PlutoRX()
         else:
             raise ValueError(f"Invalid mode: {mode}")
