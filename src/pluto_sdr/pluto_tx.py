@@ -13,13 +13,12 @@ from gnuradio import blocks
 class PlutoTX(gr.top_block):
     def __init__(
         self,
-        name: str = "Pluto Tx",
         center_freq: float = 2483100000,
         sample_rate: int = 781250,
         attenuation: int = 0,
         bandwidth: int = 20000000,
     ):
-        super().__init__(name, catch_exceptions=True)
+        super().__init__("Pluto Tx", catch_exceptions=True)
 
         self.bw = bandwidth
 
@@ -36,7 +35,6 @@ class PlutoTX(gr.top_block):
         self.attenuation = attenuation
         self.iio_pluto_sink_0.set_filter_params("Auto", "", 0, 0)
         self.connected = None
-        self.transmitting = None
 
     @property
     def sample_rate(self):
@@ -87,12 +85,10 @@ class PlutoTX(gr.top_block):
 
     def start(self):
         super().start()
-        self.transmitting = True
 
     def stop(self):
         super().stop()
         self.wait()
-        self.transmitting = False
 
 
 if __name__ == "__main__":

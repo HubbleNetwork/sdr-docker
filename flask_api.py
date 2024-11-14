@@ -1,14 +1,83 @@
-from flask import Flask, request, jsonify
-import pluto_tx
+from flask import Flask, request, jsonify, send_file
+import pluto_sdr
 import threading
 import os
+from functools import wraps
 
 app = Flask(__name__)
-pluto = pluto_tx.PlutoTX()
+
+
+class PlutoManager:
+    def __init__(self):
+        self.pluto = None
+
+    def initialize(self, mode):
+        if self.is_initialized():
+            del self.pluto
+        if mode == "tx":
+            self.pluto = pluto_sdr.PlutoTX()
+        elif mode == "rx":
+            self.pluto = pluto_sdr.PlutoRX()
+        else:
+            raise ValueError(f"Invalid mode: {mode}")
+
+    def is_initialized(self):
+        return self.pluto is not None
+
+    def is_tx_mode(self):
+        return isinstance(self.pluto, pluto_sdr.PlutoTX)
+
+    def is_rx_mode(self):
+        return isinstance(self.pluto, pluto_sdr.PlutoRX)
+
+
+pluto_manager = PlutoManager()
+
+
+def ensure_pluto_initialized(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        if not pluto_manager.is_initialized():
+            return jsonify({"error": "Pluto not initialized"}), 400
+        return f(*args, **kwargs)
+
+    return wrapper
+
+
+def ensure_tx_mode(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        if not pluto_manager.is_tx_mode():
+            return jsonify({"error": "Pluto is not in TX mode"}), 400
+        return f(*args, **kwargs)
+
+    return wrapper
+
+
+def ensure_rx_mode(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        if not pluto_manager.is_rx_mode():
+            return jsonify({"error": "Pluto is not in RX mode"}), 400
+        return f(*args, **kwargs)
+
+    return wrapper
+
+
+@app.route("/mode", methods=["POST"])
+def set_mode():
+    mode = request.json.get("mode", "tx")
+    try:
+        pluto_manager.initialize(mode)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({"mode": mode}), 200
 
 
 @app.route("/sample_rate", methods=["GET", "POST"])
+@ensure_pluto_initialized
 def set_sample_rate():
+    pluto = pluto_manager.pluto
     if request.method == "GET":
         return jsonify({"sample_rate": pluto.sample_rate}), 200
     else:
@@ -18,7 +87,9 @@ def set_sample_rate():
 
 
 @app.route("/freq", methods=["GET", "POST"])
+@ensure_pluto_initialized
 def set_freq():
+    pluto = pluto_manager.pluto
     if request.method == "GET":
         return jsonify({"freq": pluto.center_freq}), 200
     else:
@@ -28,7 +99,10 @@ def set_freq():
 
 
 @app.route("/attn", methods=["GET", "POST"])
+@ensure_pluto_initialized
+@ensure_tx_mode
 def set_attn():
+    pluto = pluto_manager.pluto
     if request.method == "GET":
         return jsonify({"attn": pluto.attenuation}), 200
     else:
@@ -38,10 +112,18 @@ def set_attn():
 
 
 @app.route("/tx", methods=["POST"])
+@ensure_pluto_initialized
+@ensure_tx_mode
 def transmit():
-    file_name = request.json.get("file_name", "")
-    num_symbols = request.json.get("num_symbols", "")
-    single_pkt = request.json.get("single_pkt", False)
+    pluto = pluto_manager.pluto
+    if request.is_json:
+        file_name = request.json.get("file_name", "")
+        num_symbols = request.json.get("num_symbols", "")
+        single_pkt = request.json.get("single_pkt", False)
+    else:
+        file_name = ""
+        num_symbols = ""
+        single_pkt = False
 
     multiple_packets = not single_pkt
     file_dir = "/app/source_files"
@@ -63,14 +145,44 @@ def transmit():
 
 
 @app.route("/stop", methods=["POST"])
+@ensure_pluto_initialized
 def stop():
-    pluto.stop()
-    return jsonify({"message": "Transmission stopped"}), 200
+    pluto_manager.pluto.stop()
+    return jsonify({"message": "Pluto stopped"}), 200
 
 
-@app.route("/status", methods=["GET"])
-def status():
-    return jsonify({"transmitting": pluto.transmitting}), 200
+@app.route("/gain", methods=["GET", "POST"])
+@ensure_pluto_initialized
+@ensure_rx_mode
+def set_gain():
+    pluto = pluto_manager.pluto
+    if request.method == "GET":
+        return jsonify({"gain": pluto.gain}), 200
+    else:
+        gain = request.json.get("gain", 0)
+        pluto.gain = gain
+        return jsonify({"gain": pluto.gain}), 200
+
+
+@app.route("/rx", methods=["POST"])
+@ensure_pluto_initialized
+@ensure_rx_mode
+def receive():
+    if request.is_json:
+        duration = request.json.get("duration", 2)
+    else:
+        duration = 2
+    pluto_manager.pluto.capture_for_duration(duration)
+    return jsonify({"message": f"Captured for {duration} seconds"}), 200
+
+
+@app.route("/transfer_file", methods=["GET"])
+def transfer_file():
+    fname = pluto_sdr.CAPTURE_FILE
+    if not os.path.exists(fname):
+        return jsonify({"error": "File not found"}), 404
+
+    return send_file(fname, as_attachment=True)
 
 
 if __name__ == "__main__":

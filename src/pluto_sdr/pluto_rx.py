@@ -8,16 +8,16 @@ from gnuradio import gr
 from gnuradio import iio
 from gnuradio import blocks
 
+CAPTURE_FILE = "/app/capture.bin"
 
 class PlutoRX(gr.top_block):
     def __init__(
         self,
-        name: str = "Pluto Rx",
         center_freq: float = 2483000000,
         sample_rate: int = 781250,
         gain: int = 64,
     ):
-        super().__init__(name, catch_exceptions=True)
+        super().__init__("Pluto Rx", catch_exceptions=True)
 
         self.iio_pluto_source_0 = iio.fmcomms2_source_fc32(
             "192.168.2.1" if "192.168.2.1" else iio.get_pluto_uri(), [True, True], 32768
@@ -59,22 +59,22 @@ class PlutoRX(gr.top_block):
         self.iio_pluto_source_0.set_gain_mode(0, "manual")
         self.iio_pluto_source_0.set_gain(0, self.gain_val)
 
-    def start_capture(self, file_name):
+    def start(self):
         self.blocks_file_sink_0 = blocks.file_sink(
-            gr.sizeof_gr_complex * 1, file_name, False
+            gr.sizeof_gr_complex * 1, CAPTURE_FILE, False
         )
         self.blocks_file_sink_0.set_unbuffered(False)
         self.connect((self.iio_pluto_source_0, 0), (self.blocks_file_sink_0, 0))
         super().start()
 
-    def stop_capture(self):
+    def stop(self):
         super().stop()
         self.wait()
 
-    def capture_for_duration(self, file_name, duration):
-        self.start_capture(file_name)
+    def capture_for_duration(self, duration):
+        self.start()
         time.sleep(duration)
-        self.stop_capture()
+        self.stop()
 
 
 if __name__ == "__main__":
