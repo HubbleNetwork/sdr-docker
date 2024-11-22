@@ -9,9 +9,6 @@ from gnuradio import iio
 from gnuradio import blocks
 
 
-CAPTURE_FILE = "/app/capture.bin"
-
-
 class PlutoRX(gr.top_block):
     def __init__(
         self,
@@ -62,11 +59,8 @@ class PlutoRX(gr.top_block):
         self.iio_pluto_source_0.set_gain(0, self.gain_val)
 
     def start(self):
-        self.blocks_file_sink_0 = blocks.file_sink(
-            gr.sizeof_gr_complex * 1, CAPTURE_FILE, False
-        )
-        self.blocks_file_sink_0.set_unbuffered(False)
-        self.connect((self.iio_pluto_source_0, 0), (self.blocks_file_sink_0, 0))
+        self.vector_sink = blocks.vector_sink_c()
+        self.connect((self.iio_pluto_source_0, 0), (self.vector_sink, 0))
         super().start()
 
     def stop(self):
@@ -74,12 +68,13 @@ class PlutoRX(gr.top_block):
         self.wait()
 
     def capture_for_duration(self, duration):
-        # check if CAPTURE_FILE exists and delete it
-        if os.path.exists(CAPTURE_FILE):
-            os.remove(CAPTURE_FILE)
         self.start()
         time.sleep(duration)
         self.stop()
+        data = self.vector_sink.data()
+        self.vector_sink.reset()
+        self.disconnect((self.iio_pluto_source_0, 0), (self.vector_sink, 0))
+        return data
 
     def __del__(self):
         self.disconnect_all()

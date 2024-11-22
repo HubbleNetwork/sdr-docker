@@ -7,6 +7,7 @@ import hubble_decoder
 import numpy as np
 
 app = Flask(__name__)
+capture_file = "/app/capture.npy"
 
 
 class PlutoManager:
@@ -186,28 +187,25 @@ def receive():
         duration = request.json.get("duration", 2)
     else:
         duration = 2
-    pluto_manager.pluto.capture_for_duration(duration)
+    data = pluto_manager.pluto.capture_for_duration(duration)
+    # save to file
+    np.save(capture_file, data)
     return jsonify({"message": f"Captured for {duration} seconds"}), 200
 
 
 @app.route("/transfer_file", methods=["GET"])
 def transfer_file():
-    fname = pluto_sdr.CAPTURE_FILE
-    if not os.path.exists(fname):
+    if not os.path.exists(capture_file):
         return jsonify({"error": "File not found"}), 404
 
-    return send_file(fname, as_attachment=True)
+    return send_file(capture_file, as_attachment=True)
 
 
 @app.route("/decode", methods=["GET"])
 @ensure_pluto_initialized
 @ensure_rx_mode
 def decode_packets():
-    fname = pluto_sdr.CAPTURE_FILE
-    pluto_manager.pluto.capture_for_duration(6)
-    # load the captured binary file with numpy
-    data = np.fromfile(fname, dtype=np.float32)
-    data = data[0::2] + 1j * data[1::2]
+    data = pluto_manager.pluto.capture_for_duration(10)
     decoder = hubble_decoder.FastDecoder(data)
     valid, preamble_symbols, data_symbols = decoder.detect_and_validate_preamble()
     if not valid:
