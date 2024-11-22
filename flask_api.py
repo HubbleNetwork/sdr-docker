@@ -3,6 +3,8 @@ import pluto_sdr
 import threading
 import os
 from functools import wraps
+import hubble_decoder
+import numpy as np
 
 app = Flask(__name__)
 
@@ -195,6 +197,24 @@ def transfer_file():
         return jsonify({"error": "File not found"}), 404
 
     return send_file(fname, as_attachment=True)
+
+
+@app.route("/decode", methods=["GET"])
+@ensure_pluto_initialized
+@ensure_rx_mode
+def decode_packets():
+    fname = pluto_sdr.CAPTURE_FILE
+    pluto_manager.pluto.capture_for_duration(6)
+    # load the captured binary file with numpy
+    data = np.fromfile(fname, dtype=np.float32)
+    data = data[0::2] + 1j * data[1::2]
+    decoder = hubble_decoder.FastDecoder(data)
+    valid, preamble_symbols, data_symbols = decoder.detect_and_validate_preamble()
+    if not valid:
+        return jsonify({"error": "Preamble not found"}), 400
+    decoded_symbols = decoder.demodulate_symbols(preamble_symbols, data_symbols)
+    device_id, payload = decoder.symbols_to_byte_fields(decoded_symbols)
+    return jsonify({"device_id": device_id, "payload": payload.tobytes().hex()}), 200
 
 
 if __name__ == "__main__":

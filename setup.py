@@ -24,5 +24,7 @@ setup(
     package_dir={"": "src"},
     install_requires=[
         "flask",
+        "numpy",
+        "scipy",
     ]
 )

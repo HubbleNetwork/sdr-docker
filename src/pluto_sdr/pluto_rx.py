@@ -8,7 +8,9 @@ from gnuradio import gr
 from gnuradio import iio
 from gnuradio import blocks
 
+
 CAPTURE_FILE = "/app/capture.bin"
+
 
 class PlutoRX(gr.top_block):
     def __init__(
@@ -72,10 +74,13 @@ class PlutoRX(gr.top_block):
         self.wait()
 
     def capture_for_duration(self, duration):
+        # check if CAPTURE_FILE exists and delete it
+        if os.path.exists(CAPTURE_FILE):
+            os.remove(CAPTURE_FILE)
         self.start()
         time.sleep(duration)
         self.stop()
-    
+
     def __del__(self):
         self.disconnect_all()
         self.stop()
