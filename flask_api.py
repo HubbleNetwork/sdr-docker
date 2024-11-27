@@ -5,6 +5,7 @@ import os
 from functools import wraps
 import hubble_decoder
 import numpy as np
+from io import BytesIO
 
 app = Flask(__name__)
 capture_file = "/app/capture.npy"
@@ -179,26 +180,23 @@ def set_gain():
         return jsonify({"gain": pluto.gain}), 200
 
 
-@app.route("/rx", methods=["POST"])
+@app.route("/rx", methods=["GET"])
 @ensure_pluto_initialized
 @ensure_rx_mode
 def receive():
-    if request.is_json:
-        duration = request.json.get("duration", 2)
-    else:
-        duration = 2
+    duration = request.args.get("duration", default=2.0, type=float)
     data = pluto_manager.pluto.capture_for_duration(duration)
-    # save to file
-    np.save(capture_file, data)
-    return jsonify({"message": f"Captured for {duration} seconds"}), 200
 
+    data_stream = BytesIO()
+    np.save(data_stream, data)
+    data_stream.seek(0)
 
-@app.route("/transfer_file", methods=["GET"])
-def transfer_file():
-    if not os.path.exists(capture_file):
-        return jsonify({"error": "File not found"}), 404
-
-    return send_file(capture_file, as_attachment=True)
+    return send_file(
+        data_stream,
+        as_attachment=True,
+        download_name="capture.npy",
+        mimetype="application/octet-stream",
+    )
 
 
 @app.route("/decode", methods=["GET"])
