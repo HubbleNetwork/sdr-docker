@@ -5,7 +5,7 @@ import re
 
 
 def get_version():
-    version_file = os.path.join(os.path.dirname(__file__), "src", "__init__.py")
+    version_file = os.path.join(os.path.dirname(__file__), "src", "pluto_sdr", "__init__.py")
     with open(version_file, "r") as f:
         content = f.read()
 
