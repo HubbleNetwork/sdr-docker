@@ -50,7 +50,7 @@ docker run hello-world
 ```shell
 git clone git@github.com:HubbleNetwork/pluto-sdr-docker.git
 cd pluto-sdr-docker/
-docker build -t pluto_container .
+docker build -t pluto_container --ssh default .
 ```
 
 ## Run the container
