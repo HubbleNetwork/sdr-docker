@@ -45,6 +45,15 @@ Now you should be able to run docker containers without sudo:
 docker run hello-world
 ```
 
+### Add SSH key to SSH agent
+
+Building the container requires cloning various Hubble git repos during the build process, so the container will need SSH authorization. Add your SSH key to ssh-agent (example using a key named `id_ed25519`):
+
+```shell
+eval "$(ssh-agent -s)"
+ssh-add ~/.ssh/id_ed25519
+```
+
 ### Clone and build docker container
 
 ```shell

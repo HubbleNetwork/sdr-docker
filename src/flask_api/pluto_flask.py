@@ -169,14 +169,17 @@ def receive():
 @ensure_pluto_initialized
 @ensure_rx_mode
 def decode_packets():
-    data = pluto_manager.pluto.capture_for_duration(10)
+    data = pluto_manager.pluto.capture_for_duration(5)
     decoder = FastDecoder(data)
-    valid, preamble_symbols, data_symbols = decoder.detect_and_validate_preamble()
+    preambles = decoder.find_all_preambles()
+    valid = preambles != []
     if not valid:
         return flask.jsonify({"error": "Preamble not found"}), 400
-    decoded_symbols = decoder.demodulate_symbols(preamble_symbols, data_symbols)
-    device_id, payload = decoder.symbols_to_byte_fields(decoded_symbols)
-    return (
-        flask.jsonify({"device_id": device_id, "payload": payload.tobytes().hex()}),
-        200,
-    )
+    packets = []
+    for preamble in preambles:
+        demodulated_symbols = decoder.demodulate_symbols(preamble)
+        device_id, payload = decoder.extract_device_id_and_payload(
+            demodulated_symbols
+        )
+        packets.append({"device_id": device_id, "payload": payload.tobytes().hex()})
+    return flask.jsonify({"packets": packets}), 200
