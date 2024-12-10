@@ -1,13 +1,13 @@
-from flask import Flask, request, jsonify, send_file
-import pluto_sdr
-import threading
+import flask
 import os
 from functools import wraps
-import hubble_decoder
 import numpy as np
 from io import BytesIO
 
-app = Flask(__name__)
+import pluto_sdr
+from sim_decode.receiver.fast_decoder import FastDecoder
+
+app = flask.Flask(__name__)
 capture_file = "/app/capture.npy"
 
 
@@ -49,7 +49,7 @@ def ensure_pluto_initialized(f):
     @wraps(f)
     def wrapper(*args, **kwargs):
         if not pluto_manager.is_initialized():
-            return jsonify({"error": "Pluto not initialized"}), 400
+            return flask.jsonify({"error": "Pluto not initialized"}), 400
         return f(*args, **kwargs)
 
     return wrapper
@@ -59,7 +59,7 @@ def ensure_tx_mode(f):
     @wraps(f)
     def wrapper(*args, **kwargs):
         if not pluto_manager.is_tx_mode():
-            return jsonify({"error": "Pluto is not in TX mode"}), 400
+            return flask.jsonify({"error": "Pluto is not in TX mode"}), 400
         return f(*args, **kwargs)
 
     return wrapper
@@ -69,7 +69,7 @@ def ensure_rx_mode(f):
     @wraps(f)
     def wrapper(*args, **kwargs):
         if not pluto_manager.is_rx_mode():
-            return jsonify({"error": "Pluto is not in RX mode"}), 400
+            return flask.jsonify({"error": "Pluto is not in RX mode"}), 400
         return f(*args, **kwargs)
 
     return wrapper
@@ -77,41 +77,41 @@ def ensure_rx_mode(f):
 
 @app.route("/")
 def home():
-    return jsonify({"status": "Server is running"}), 200
+    return flask.jsonify({"status": "Server is running"}), 200
 
 
 @app.route("/mode", methods=["POST"])
 def set_mode():
-    mode = request.json.get("mode", "tx")
+    mode = flask.request.json.get("mode", "tx")
     try:
         pluto_manager.initialize(mode)
     except ValueError as e:
-        return jsonify({"error": str(e)}), 400
-    return jsonify({"mode": mode}), 200
+        return flask.jsonify({"error": str(e)}), 400
+    return flask.jsonify({"mode": mode}), 200
 
 
 @app.route("/sample_rate", methods=["GET", "POST"])
 @ensure_pluto_initialized
 def set_sample_rate():
     pluto = pluto_manager.pluto
-    if request.method == "GET":
-        return jsonify({"sample_rate": pluto.sample_rate}), 200
+    if flask.request.method == "GET":
+        return flask.jsonify({"sample_rate": pluto.sample_rate}), 200
     else:
-        sample_rate = request.json.get("sample_rate", 781250)
+        sample_rate = flask.request.json.get("sample_rate", 781250)
         pluto.sample_rate = sample_rate
-        return jsonify({"sample_rate": pluto.sample_rate}), 200
+        return flask.jsonify({"sample_rate": pluto.sample_rate}), 200
 
 
 @app.route("/freq", methods=["GET", "POST"])
 @ensure_pluto_initialized
 def set_freq():
     pluto = pluto_manager.pluto
-    if request.method == "GET":
-        return jsonify({"freq": pluto.center_freq}), 200
+    if flask.request.method == "GET":
+        return flask.jsonify({"freq": pluto.center_freq}), 200
     else:
-        freq = request.json.get("freq", 2.4831e9)
+        freq = flask.request.json.get("freq", 2.4831e9)
         pluto.center_freq = freq
-        return jsonify({"freq": pluto.center_freq}), 200
+        return flask.jsonify({"freq": pluto.center_freq}), 200
 
 
 @app.route("/attn", methods=["GET", "POST"])
@@ -119,12 +119,12 @@ def set_freq():
 @ensure_tx_mode
 def set_attn():
     pluto = pluto_manager.pluto
-    if request.method == "GET":
-        return jsonify({"attn": pluto.attenuation}), 200
+    if flask.request.method == "GET":
+        return flask.jsonify({"attn": pluto.attenuation}), 200
     else:
-        attn = request.json.get("attn", 0)
+        attn = flask.request.json.get("attn", 0)
         pluto.attenuation = attn
-        return jsonify({"attn": pluto.attenuation}), 200
+        return flask.jsonify({"attn": pluto.attenuation}), 200
 
 
 @app.route("/tx", methods=["POST"])
@@ -132,10 +132,10 @@ def set_attn():
 @ensure_tx_mode
 def transmit():
     pluto = pluto_manager.pluto
-    if request.is_json:
-        file_name = request.json.get("file_name", "")
-        num_symbols = request.json.get("num_symbols", "")
-        single_pkt = request.json.get("single_pkt", False)
+    if flask.request.is_json:
+        file_name = flask.request.json.get("file_name", "")
+        num_symbols = flask.request.json.get("num_symbols", "")
+        single_pkt = flask.request.json.get("single_pkt", False)
     else:
         file_name = ""
         num_symbols = ""
@@ -157,14 +157,14 @@ def transmit():
         pluto.packet_mode(file_name, multiple_packets)
 
     pluto.start()
-    return jsonify({"message": msg}), 200
+    return flask.jsonify({"message": msg}), 200
 
 
 @app.route("/stop", methods=["POST"])
 @ensure_pluto_initialized
 def stop():
     pluto_manager.pluto.stop()
-    return jsonify({"message": "Pluto stopped"}), 200
+    return flask.jsonify({"message": "Pluto stopped"}), 200
 
 
 @app.route("/gain", methods=["GET", "POST"])
@@ -172,26 +172,26 @@ def stop():
 @ensure_rx_mode
 def set_gain():
     pluto = pluto_manager.pluto
-    if request.method == "GET":
-        return jsonify({"gain": pluto.gain}), 200
+    if flask.request.method == "GET":
+        return flask.jsonify({"gain": pluto.gain}), 200
     else:
-        gain = request.json.get("gain", 0)
+        gain = flask.request.json.get("gain", 0)
         pluto.gain = gain
-        return jsonify({"gain": pluto.gain}), 200
+        return flask.jsonify({"gain": pluto.gain}), 200
 
 
 @app.route("/rx", methods=["GET"])
 @ensure_pluto_initialized
 @ensure_rx_mode
 def receive():
-    duration = request.args.get("duration", default=2.0, type=float)
+    duration = flask.request.args.get("duration", default=2.0, type=float)
     data = pluto_manager.pluto.capture_for_duration(duration)
 
     data_stream = BytesIO()
     np.save(data_stream, data)
     data_stream.seek(0)
 
-    return send_file(
+    return flask.send_file(
         data_stream,
         as_attachment=True,
         download_name="capture.npy",
@@ -204,13 +204,16 @@ def receive():
 @ensure_rx_mode
 def decode_packets():
     data = pluto_manager.pluto.capture_for_duration(10)
-    decoder = hubble_decoder.FastDecoder(data)
+    decoder = FastDecoder(data)
     valid, preamble_symbols, data_symbols = decoder.detect_and_validate_preamble()
     if not valid:
-        return jsonify({"error": "Preamble not found"}), 400
+        return flask.jsonify({"error": "Preamble not found"}), 400
     decoded_symbols = decoder.demodulate_symbols(preamble_symbols, data_symbols)
     device_id, payload = decoder.symbols_to_byte_fields(decoded_symbols)
-    return jsonify({"device_id": device_id, "payload": payload.tobytes().hex()}), 200
+    return (
+        flask.jsonify({"device_id": device_id, "payload": payload.tobytes().hex()}),
+        200,
+    )
 
 
 if __name__ == "__main__":

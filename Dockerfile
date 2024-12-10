@@ -34,13 +34,13 @@ COPY source_files/ /app/source_files/
 RUN mkdir -p /root/.ssh && ssh-keyscan github.com >> /root/.ssh/known_hosts
 RUN --mount=type=ssh ssh -T git@github.com || true
 
-# install sim-decode
-ADD git@github.com:HubbleNetwork/sim-decode.git /app/sim-decode
+# install the python package
 RUN pip3 install setuptools wheel
-RUN --mount=type=ssh pip3 install /app/sim-decode
-
-# install the rest of the dependencies
 RUN pip3 install .
+
+# install sim-decode
+RUN --mount=type=ssh git clone --branch develop --depth 1 git@github.com:HubbleNetwork/sim-decode.git /app/sim-decode
+RUN --mount=type=ssh pip3 install /app/sim-decode
 
 # start the http server
 EXPOSE 5000
