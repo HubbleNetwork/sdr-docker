@@ -4,44 +4,10 @@ from functools import wraps
 import numpy as np
 from io import BytesIO
 
-import pluto_sdr
+from pluto_sdr import PlutoManager
 from sim_decode.receiver.fast_decoder import FastDecoder
 
 app = flask.Flask(__name__)
-capture_file = "/app/capture.npy"
-
-
-class PlutoManager:
-    def __init__(self):
-        self.pluto = None
-
-    def initialize(self, mode):
-
-        if mode == "tx":
-            if self.is_tx_mode():
-                return
-            if self.is_initialized():
-                del self.pluto
-            self.pluto = pluto_sdr.PlutoTX()
-        elif mode == "rx":
-            if self.is_rx_mode():
-                return
-            if self.is_initialized():
-                del self.pluto
-            self.pluto = pluto_sdr.PlutoRX()
-        else:
-            raise ValueError(f"Invalid mode: {mode}")
-
-    def is_initialized(self):
-        return self.pluto is not None
-
-    def is_tx_mode(self):
-        return isinstance(self.pluto, pluto_sdr.PlutoTX)
-
-    def is_rx_mode(self):
-        return isinstance(self.pluto, pluto_sdr.PlutoRX)
-
-
 pluto_manager = PlutoManager()
 
 
@@ -214,7 +180,3 @@ def decode_packets():
         flask.jsonify({"device_id": device_id, "payload": payload.tobytes().hex()}),
         200,
     )
-
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)

@@ -26,7 +26,7 @@ ENV HOME=/root
 # copy the source code to the container
 WORKDIR /app
 COPY setup.py /app/
-COPY flask_api.py /app/
+COPY run_api.py /app/
 COPY src/ /app/src/ 
 COPY source_files/ /app/source_files/
 
@@ -44,4 +44,4 @@ RUN --mount=type=ssh pip3 install /app/sim-decode
 
 # start the http server
 EXPOSE 5000
-CMD ["python3", "flask_api.py"]
+CMD ["python3", "run_api.py"]
