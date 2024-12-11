@@ -77,8 +77,8 @@ class PlutoRX(gr.top_block):
         return data
 
     def __del__(self):
-        self.disconnect_all()
         self.stop()
+        self.disconnect_all()
 
 
 if __name__ == "__main__":
