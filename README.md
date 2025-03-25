@@ -56,7 +56,7 @@ ssh-add ~/.ssh/id_ed25519
 
 ### Clone and build docker container
 
-The tx files are stored using git-lfs, so you'll need to install git-lfs before cloning the repo.
+The tx files are stored using git-lfs, so you'll need to install git-lfs before cloning the repo. `sudo apt install git-lfs` or `brew install git-lfs` should work.
 
 ```shell
 git clone git@github.com:HubbleNetwork/pluto-sdr-docker.git
