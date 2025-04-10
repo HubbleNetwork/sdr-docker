@@ -30,6 +30,10 @@ COPY run_api.py /app/
 COPY src/ /app/src/ 
 COPY source_files/ /app/source_files/
 
+# Extract all .tar.gz files into /app/source_files/ and remove the archives
+RUN find /app/source_files -name "*.tar.gz" -exec tar -xzf {} -C /app/source_files/ \; && \
+    find /app/source_files -name "*.tar.gz" -delete
+
 # verify that ssh is working
 RUN mkdir -p /root/.ssh && ssh-keyscan github.com >> /root/.ssh/known_hosts
 RUN --mount=type=ssh ssh -T git@github.com || true
