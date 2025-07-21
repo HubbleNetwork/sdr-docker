@@ -138,6 +138,7 @@ The following source files are currently included in the container:
 - tx_hubble_pkts_nordic_24symbols_seq_num_1pkt_per_sec_extra_100000_preambles.out
 - tx_hubble_pkts_nordic_24symbols_seq_num_1pkt_per_sec_extra_10000_preambles.out
 - SEA_hubble_pkts_nordic_24symbols_seq_num_1pkt_per_1s.out
+- fixed_SEA_hubble_pkts_nordic_24symbols_seq_num_1pkt_per_1s.out (same as above, but with the sequence number bits in the correct place. Both kept for any tests using the old one.)
 - tx_hubble_pkts_nordic_24symbols_seq_num_1pkt_per_sec_extra_1000_preambles.out
 - tx_hubble_pkts_nordic_24symbols_1pkt_per_sec_doppler.out
 - tx_hubble_pkts_nordic_24symbols_seq_num_1pkt_per_sec.out
