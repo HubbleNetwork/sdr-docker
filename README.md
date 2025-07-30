@@ -144,6 +144,13 @@ The following source files are currently included in the container:
 - tx_hubble_pkts_nordic_24symbols_seq_num_1pkt_per_sec.out
 - tx_hubble_pkts_nordic_24symbols.out
 - tx_hubble_pkts_nordic_24symbols_seq_num_1pkt_per_sec_extra_100_preambles.out
+- cal_node_id_10000001_seq_num_1pkt_per_1s.out
+- cal_node_id_10000002_seq_num_1pkt_per_1s.out
+- cal_node_id_10000003_seq_num_1pkt_per_1s.out
+- cal_node_id_10000004_seq_num_1pkt_per_1s.out
+- cal_node_id_10000005_seq_num_1pkt_per_1s.out
+- cal_node_id_10000006_seq_num_1pkt_per_1s.out
+- simultaneous_cal_nodes_seq_num_1pkt_per_1s.out
 
 ### Hubble packet transmissions with older (TI) frequency step saved in old.tar.gz
 
