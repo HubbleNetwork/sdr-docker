@@ -53,6 +53,8 @@ def set_mode():
         pluto_manager.initialize(mode)
     except ValueError as e:
         return flask.jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return flask.jsonify({"error": f"Failed to initialize Pluto, error: {str(e)}"}), 500
     return flask.jsonify({"mode": mode}), 200
 
 
@@ -119,6 +121,9 @@ def transmit():
         msg = "Transmitting tone"
         pluto.tone_mode()
     else:
+        if not os.path.exists(file_name):
+            return flask.jsonify({"error": f"File not found: {file_name}"}), 400
+        
         msg = "Transmitting packets"
         pluto.packet_mode(file_name, multiple_packets)
 
@@ -151,6 +156,10 @@ def set_gain():
 @ensure_rx_mode
 def receive():
     duration = flask.request.args.get("duration", default=2.0, type=float)
+
+    if duration is None or duration <= 0:
+        return flask.jsonify({"error": "duration must be > 0"}), 400
+
     data = pluto_manager.pluto.capture_for_duration(duration)
 
     data_stream = BytesIO()
@@ -177,10 +186,23 @@ def decode_packets():
     if not valid:
         return flask.jsonify({"error": "Preamble not found"}), 400
     packets = []
+
     for preamble in preambles:
+        # Demodulate symbols
         demodulated_symbols = decoder.demodulate_symbols(preamble)
-        device_id, payload = decoder.extract_device_id_and_payload(
-            demodulated_symbols
-        )
-        packets.append({"device_id": device_id, "payload": payload.tobytes().hex()})
+        if demodulated_symbols is None:
+            return flask.jsonify({"error": "Header bits produced an out-of-range symbol count"}), 400
+
+        # Extract device ID + payload
+        device_id, payload = decoder.extract_device_id_and_payload(demodulated_symbols)
+        if device_id is None:
+            return flask.jsonify({
+                "error": "Invalid payload header, payload could not be decoded"}), 400
+
+        # Good packet
+        packets.append({
+            "device_id": device_id,
+            "payload": payload.tobytes().hex()
+        })
+    
     return flask.jsonify({"packets": packets}), 200
