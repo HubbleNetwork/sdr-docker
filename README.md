@@ -65,6 +65,25 @@ git lfs pull
 docker build -t pluto_container --ssh default .
 ```
 
+**Note:**
+- If you are not on x86 architecture, go to [Libiio releases](https://github.com/analogdevicesinc/libiio/releases/tag/v0.26) and choose the right architecture.
+- Go the [Dockerfile](./Dockerfile) and edit this line to the right arch:
+
+```
+# Download and install libiio
+RUN wget https://github.com/analogdevicesinc/libiio/releases/download/v0.26/libiio-0.26.ga0eca0d-Linux-Ubuntu-22.04.deb && \
+    DEBIAN_FRONTEND=noninteractive apt install -y ./libiio-0.26.ga0eca0d-Linux-Ubuntu-22.04.deb && \
+    rm libiio-0.26.ga0eca0d-Linux-Ubuntu-22.04.deb
+```
+
+- Example for arm64 arch:
+```
+# Download and install libiio
+RUN wget https://github.com/analogdevicesinc/libiio/releases/download/v0.26/libiio-0.26.g-Ubuntu-arm64v8.deb && \
+    DEBIAN_FRONTEND=noninteractive apt install -y ./libiio-0.26.g-Ubuntu-arm64v8.deb && \
+    rm libiio-0.26.g-Ubuntu-arm64v8.deb
+```
+
 ## Run the container
 
 ### Run the container in the background
