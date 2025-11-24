@@ -178,8 +178,10 @@ def receive():
 @ensure_pluto_initialized
 @ensure_rx_mode
 def decode_packets():
-    data = pluto_manager.pluto.capture_for_duration(5)
     frequency_step = flask.request.args.get("frequency_step", default=373, type=int)
+    decode_interval = flask.request.args.get("interval", default=5, type=int)
+
+    data = pluto_manager.pluto.capture_for_duration(decode_interval)
     decoder = FastDecoder(data, frequency_step)
     preambles = decoder.find_all_preambles()
     valid = preambles != []
