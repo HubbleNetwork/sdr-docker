@@ -7,6 +7,7 @@ import gnuradio
 from gnuradio import gr
 from gnuradio import iio
 from gnuradio import blocks
+from gnuradio import zeromq
 
 
 class PlutoRX(gr.top_block):
@@ -75,6 +76,32 @@ class PlutoRX(gr.top_block):
         self.vector_sink.reset()
         self.disconnect((self.iio_pluto_source_0, 0), (self.vector_sink, 0))
         return data
+
+    def start_stream(self, socket_str: str = "tcp://127.0.0.1:5557"):
+        """
+        Continuous streaming mode:
+        Connect Pluto -> ZeroMQ PUSH sink and start the flowgraph.
+        Runs until stop_stream() is called.
+        """
+        # create a ZMQ PUSH sink
+        self.zmq_sink = zeromq.push_sink(
+            gr.sizeof_gr_complex,
+            1,
+            socket_str,
+            100,
+            False,
+            -1,
+        )
+
+        self.connect((self.iio_pluto_source_0, 0), (self.zmq_sink, 0))
+        super().start()
+
+    def stop_stream(self):
+        super().stop()
+        self.wait()
+        if hasattr(self, "zmq_sink"):
+            self.disconnect((self.iio_pluto_source_0, 0), (self.zmq_sink, 0))
+            self.zmq_sink = None
 
     def __del__(self):
         self.stop()
