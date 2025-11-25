@@ -1,0 +1,157 @@
+import threading
+from typing import List, Dict
+
+import numpy as np
+import zmq
+
+from sim_decode.receiver.fast_decoder import FastDecoder
+
+class PlutoUtils:
+    DEFAULT_ZMQ_SOCKET = "tcp://127.0.0.1:5557"
+
+    def __init__(self):
+        self._stream_thread: threading.Thread = None
+        self._stop_event: threading.Event = threading.Event()
+        self._packets: List[Dict] = []
+        self._lock: threading.Lock = threading.Lock()
+
+    @staticmethod
+    def decode_packets(data, frequency_step=373):
+        """
+        Decode a window of samples using FastDecoder.
+
+        Returns:
+            packets (list[dict])    - list of packets
+            errors (list or None)     - error message if decoding failed
+        """
+        decoder = FastDecoder(data, frequency_step)
+        preambles = decoder.find_all_preambles()
+        valid = preambles != []
+        if not valid:
+            return [], ["Preamble not found"]
+
+        packets = []
+        errors = []
+        for preamble in preambles:
+            # Demodulate symbols
+            demodulated_symbols = decoder.demodulate_symbols(preamble)
+            if demodulated_symbols is None:
+                errors.append(f"Header bits produced an out-of-range symbol count")
+                continue
+
+            # Extract device ID + payload
+            device_id, payload = decoder.extract_device_id_and_payload(demodulated_symbols)
+            if device_id is None:
+                errors.append(f"Invalid payload header, payload could not be decoded")
+                continue
+
+            # Good packet
+            packets.append({
+                "device_id": device_id,
+                "payload": payload.tobytes().hex()
+            })
+
+        # return either the list of packets, or errors if none were valid
+        if not packets:
+            return [], errors
+
+        return packets, None
+
+    def start_stream_decode(self, socket_str=DEFAULT_ZMQ_SOCKET, window_size=1, frequency_step=373) -> bool:
+        """
+        Start continuous RX stream (Pluto -> ZMQ) and a
+        background consumer that decodes packets with FastDecoder.
+        """
+        if window_size <= 0:
+            raise ValueError("window_size must be > 0")
+
+        # already running
+        if self._stream_thread is not None and self._stream_thread.is_alive():
+            return False
+
+        self._stop_event.clear()
+        self._stream_thread = threading.Thread(
+            target=self._stream_decode_loop,
+            args=(socket_str, window_size, frequency_step),
+            daemon=True,
+        )
+        self._stream_thread.start()
+        return True
+
+    def stop_stream_decode(self) -> bool:
+        """
+        Stop the background decode thread.
+        Returns True if a thread was stopped, False if there was
+        nothing to stop.
+        """
+        # nothing to stop
+        if self._stream_thread is None:
+            return False
+
+        self._stop_event.set()
+        self._stream_thread.join(timeout=1.0)
+        self._stream_thread = None
+
+        with self._lock:
+            self._packets.clear()
+
+        return True
+
+    def _stream_decode_loop(self, socket_str: str, window_size: int, frequency_step: int):
+        """
+        Background thread:
+        - pulls IQ chunks from ZMQ
+        - consume a window of `window_size = sample_rate * duration` samples
+        - runs FastDecoder on that window
+        - appends decoded packets into self._packets
+        """
+        context = zmq.Context.instance()
+        results_receiver = context.socket(zmq.PULL)
+        results_receiver.connect(socket_str)
+
+        buf = np.zeros(0, dtype=np.complex64)
+
+        try:
+            while not self._stop_event.is_set():
+                # blocking receive of one ZMQ message (a chunk of complex64 samples)
+                try:
+                    raw = results_receiver.recv()
+                except zmq.ZMQError:
+                    break
+
+                chunk = np.frombuffer(raw, dtype=np.complex64)
+                if chunk.size == 0:
+                    continue
+
+                # append to buffer
+                buf = np.concatenate([buf, chunk])
+                if buf.size < window_size:
+                    continue
+
+                # keep only the most recent window_s worth of samples
+                while buf.size >= window_size:
+                    # decode the window and drop it from the buffer
+                    data = buf[:window_size]
+                    buf = buf[window_size:]
+
+                    # decode this window
+                    packets, err = self.decode_packets(data, frequency_step)
+
+                    if err is not None:
+                        continue
+
+                    # store decoded packets
+                    with self._lock:
+                        self._packets.extend(packets)
+        
+        finally:
+            results_receiver.close()
+    
+    def get_packets(self):
+        """
+        Return all packets decoded so far and clear the internal list.
+        """
+        with self._lock:
+            pkts = list(self._packets)
+            self._packets.clear()
+        return pkts

@@ -5,7 +5,6 @@ import numpy as np
 from io import BytesIO
 
 from pluto_sdr import PlutoManager
-from sim_decode.receiver.fast_decoder import FastDecoder
 
 app = flask.Flask(__name__)
 pluto_manager = PlutoManager()
@@ -182,29 +181,61 @@ def decode_packets():
     decode_interval = flask.request.args.get("interval", default=5, type=int)
 
     data = pluto_manager.pluto.capture_for_duration(decode_interval)
-    decoder = FastDecoder(data, frequency_step)
-    preambles = decoder.find_all_preambles()
-    valid = preambles != []
-    if not valid:
-        return flask.jsonify({"error": "Preamble not found"}), 400
-    packets = []
 
-    for preamble in preambles:
-        # Demodulate symbols
-        demodulated_symbols = decoder.demodulate_symbols(preamble)
-        if demodulated_symbols is None:
-            return flask.jsonify({"error": "Header bits produced an out-of-range symbol count"}), 400
-
-        # Extract device ID + payload
-        device_id, payload = decoder.extract_device_id_and_payload(demodulated_symbols)
-        if device_id is None:
-            return flask.jsonify({
-                "error": "Invalid payload header, payload could not be decoded"}), 400
-
-        # Good packet
-        packets.append({
-            "device_id": device_id,
-            "payload": payload.tobytes().hex()
-        })
+    packets, err = pluto_manager.pluto_utils.decode_packets(data, frequency_step)
+    if err is not None:
+        return flask.jsonify({"error": err}), 400
     
     return flask.jsonify({"packets": packets}), 200
+
+
+@app.route("/stream", methods=["GET"])
+@ensure_pluto_initialized
+@ensure_rx_mode
+def stream():
+    mode = flask.request.args.get("mode", default="get_packets")
+
+    if mode == "start":
+        frequency_step = flask.request.args.get("frequency_step", default=373, type=int)
+
+        # let have the window period be 5s
+        window_size = int(5 * pluto_manager.pluto.sample_rate)
+        
+        try:
+            pluto_manager.pluto.start_stream()
+        except Exception as e:
+            return flask.jsonify({"error": str(e)}), 400
+
+        try:
+            ok = pluto_manager.pluto_utils.start_stream_decode(window_size=window_size, frequency_step=frequency_step)
+        except Exception as e:
+            # stop the stream when decode fails to start
+            pluto_manager.pluto.stop_stream()
+            return flask.jsonify({"error": str(e)}), 400
+
+        if not ok:
+            return flask.jsonify({"message": "Already running"}), 200
+
+        return flask.jsonify({"message": "Stream decode started"}), 200
+
+    elif mode == "stop":
+        ok = pluto_manager.pluto_utils.stop_stream_decode()
+
+        if not ok:
+            # No decode thread was running
+            return flask.jsonify({"message": "No active decode stream"}), 200
+        
+        # if decode thread was stopped, also stop the pluto stream
+        try:
+            pluto_manager.pluto.stop_stream()
+        except Exception as e:
+            return flask.jsonify({"error": f"Failed to stop Pluto stream, error: {str(e)}"}), 400
+
+        return flask.jsonify({"message": "Pluto stream stopped"}), 200
+
+    elif mode == "get_packets":
+        packets = pluto_manager.pluto_utils.get_packets()
+        return flask.jsonify({"packets": packets}), 200
+
+    else:
+        return flask.jsonify({"error": f"Unknown mode: {mode}"}), 400

@@ -1,9 +1,10 @@
-from pluto_sdr import PlutoRX, PlutoTX
+from pluto_sdr import PlutoRX, PlutoTX, PlutoUtils
 
 
 class PlutoManager:
     def __init__(self):
         self.pluto = None
+        self.pluto_utils = PlutoUtils()
 
     def initialize(self, mode):
 
@@ -17,6 +18,12 @@ class PlutoManager:
             if self.is_rx_mode():
                 return
             if self.is_initialized():
+                # try to remove the decode stream if it exists
+                try:
+                    self.pluto_utils.stop_stream_decode()
+                except Exception:
+                    pass
+
                 del self.pluto
             self.pluto = PlutoRX()
         else:
