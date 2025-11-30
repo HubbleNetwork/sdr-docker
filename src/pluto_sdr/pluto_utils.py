@@ -40,7 +40,7 @@ class PlutoUtils:
                 continue
 
             # Extract device ID + payload
-            device_id, payload = decoder.extract_device_id_and_payload(demodulated_symbols)
+            device_id, payload, num_sym_corrected = decoder.extract_device_id_and_payload(demodulated_symbols)
             if device_id is None:
                 errors.append(f"Invalid payload header, payload could not be decoded")
                 continue
@@ -48,7 +48,8 @@ class PlutoUtils:
             # Good packet
             packets.append({
                 "device_id": device_id,
-                "payload": payload.tobytes().hex()
+                "payload": payload.tobytes().hex(),
+                "symbols_corrected": num_sym_corrected if num_sym_corrected >= 0 else "Packet uncorrectable",
             })
 
         # return either the list of packets, or errors if none were valid
