@@ -173,6 +173,15 @@ def receive():
     )
 
 
+@app.route("/debug", methods=["POST"])
+@ensure_pluto_initialized
+@ensure_rx_mode
+def set_symbol_timing_debug():
+    is_enable = flask.request.json.get("enable", False)
+    pluto_manager.pluto_utils.set_symbol_timing_debug(is_enable)
+    return flask.jsonify({"message": "Symbol timing debug " + ("enabled" if is_enable else "disabled")}), 200
+
+
 @app.route("/decode", methods=["GET"])
 @ensure_pluto_initialized
 @ensure_rx_mode

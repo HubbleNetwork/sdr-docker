@@ -14,15 +14,19 @@ class PlutoUtils:
         self._stop_event: threading.Event = threading.Event()
         self._packets: List[Dict] = []
         self._lock: threading.Lock = threading.Lock()
+        self._is_symbol_timing_debug: bool = False
 
-    @staticmethod
-    def decode_packets(data, frequency_step=373):
+    def decode_packets(self, data, frequency_step=373):
         """
         Decode a window of samples using FastDecoder.
 
+        Args:
+            data (list[complex<float>]) - array of complex64 samples
+            frequency_step (int)        - frequency step in Hz
+
         Returns:
             packets (list[dict])    - list of packets
-            errors (list or None)     - error message if decoding failed
+            errors (list or None)   - error message if decoding failed
         """
         decoder = FastDecoder(data, frequency_step)
         preambles = decoder.find_all_preambles()
@@ -34,7 +38,7 @@ class PlutoUtils:
         errors = []
         for preamble in preambles:
             # Demodulate symbols
-            demodulated_symbols = decoder.demodulate_symbols(preamble)
+            demodulated_symbols, timing_info = decoder.demodulate_symbols(preamble, self._is_symbol_timing_debug)
             if demodulated_symbols is None:
                 errors.append(f"Header bits produced an out-of-range symbol count")
                 continue
@@ -46,17 +50,30 @@ class PlutoUtils:
                 continue
 
             # Good packet
-            packets.append({
+            packet = {
                 "device_id": device_id,
                 "payload": payload.tobytes().hex(),
-                "symbols_corrected": num_sym_corrected if num_sym_corrected >= 0 else "Packet uncorrectable",
-            })
+                "symbols_corrected": (
+                    num_sym_corrected if num_sym_corrected >= 0 else "Packet uncorrectable"
+                ),
+            }
+
+            if self._is_symbol_timing_debug:
+                packet["symbol_timing_info"] = timing_info if timing_info is not None else "Unavailable"
+
+            packets.append(packet)
 
         # return either the list of packets, or errors if none were valid
         if not packets:
             return [], errors
 
         return packets, None
+
+    def set_symbol_timing_debug(self, enabled: bool):
+        """
+        Enable or disable symbol timing debug info in decoded packets.
+        """
+        self._is_symbol_timing_debug = enabled
 
     def start_stream_decode(self, socket_str=DEFAULT_ZMQ_SOCKET, window_size=1, frequency_step=373) -> bool:
         """
