@@ -1,0 +1,31 @@
+services:
+  app:
+    image: pluto_container
+    container_name: pluto_container
+    working_dir: /app
+
+    # Mount local code into the container
+    volumes:
+      - ./:/app # main repo -> /app
+      - ../sim-decode:/app/sim-decode
+      - ${SSH_AUTH_SOCK}:${SSH_AUTH_SOCK}
+      - ~/.ssh/known_hosts:/root/.ssh/known_hosts:ro
+
+    environment:
+      SSH_AUTH_SOCK: ${SSH_AUTH_SOCK}
+    
+    # expose API over port 5000
+    ports:
+      - "5000:5000"
+
+    # allow interactive shell
+    stdin_open: true
+    tty: true
+
+    # Command that runs when the container starts
+    command: >
+      bash -lc "
+        pip3 install -e . &&
+        pip3 install -e /app/sim-decode &&
+        python3 run_api.py
+      "
