@@ -67,7 +67,7 @@ docker build -t pluto_container --ssh default .
 
 **Note:**
 - If you are not on x86 architecture, go to [Libiio releases](https://github.com/analogdevicesinc/libiio/releases/tag/v0.26) and choose the right architecture.
-- Go the [Dockerfile](./Dockerfile) and edit this line to the right arch:
+- Go to the [Dockerfile](./Dockerfile) and edit this line to the right arch:
 
 ```
 # Download and install libiio
@@ -115,6 +115,62 @@ Or with one line (be careful if you have multiple containers running):
 ```shell
 docker kill $(docker ps -q)
 ```
+
+## Development
+
+When developing, instead of running the container using `docker run`, we can leverage Docker Compose workflow.
+
+**Warning:** The current workflow forwards your SSH socket to the container. This is dangerous and
+only suitable for local development.
+
+### Prepare local repos
+
+Make sure the [sim-decode](http://github.com/HubbleNetwork/sim-decode) repo has been cloned locally.
+Your directory may look like this:
+
+```
+../
+├── sim-decode/
+└── pluto-sdr-docker/
+```
+
+If you put `sim-decode` elsewhere, edit the mount line in [compose.yml](./compose.yml):
+```
+- ../sim-decode:/app/sim-decode
+```
+
+to the path that leads to your local `sim-decode` repo. e.g.
+
+```
+- /path/to/sim-decode:/app/sim-decode
+```
+
+### Run the container
+
+1. Build the container once:
+    ```shell
+    docker build -t pluto_container --ssh default .
+    ```
+
+2. Run the workflow:
+    ```shell
+    docker compose up
+    ```
+
+3. When you made any changes to the `pluto-sdr-docker` or `sim-decode`, you can either do:
+    ```shell
+    Ctrl+C
+    docker compose down
+    docker compose up
+    ```
+
+    or:
+
+    ```shell
+    docker compose restart
+    ```
+
+**Note:** if you make any changes that require Docker to rebuild, you still need to rebuild the container.
 
 ## Information about source files
 
