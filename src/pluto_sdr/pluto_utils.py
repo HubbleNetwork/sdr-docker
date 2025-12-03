@@ -4,6 +4,7 @@ from typing import List, Dict
 import numpy as np
 import zmq
 
+from datetime import datetime
 from sim_decode.receiver.fast_decoder import FastDecoder
 
 class PlutoUtils:
@@ -15,7 +16,8 @@ class PlutoUtils:
         self._packets: List[Dict] = []
         self._lock: threading.Lock = threading.Lock()
         self._is_symbol_timing_debug: bool = False
-
+        self._devices: Dict = {}
+    
     def decode_packets(self, data, frequency_step=373):
         """
         Decode a window of samples using FastDecoder.
@@ -48,14 +50,30 @@ class PlutoUtils:
             if device_id is None:
                 errors.append(f"Invalid payload header, payload could not be decoded")
                 continue
+            
+            # Grab Channel
+            channel = decoder.get_frequency_channel(preamble)
+            
+            # Get Time
+            cur_time = datetime.now()
+
+            # Check if Channel has changed, if so, update time
+            dev = self._devices.get(device_id)
+            if dev is None:
+                self._devices[device_id] = {"channel": channel, "time": cur_time}
+            elif dev["channel"] != channel:
+                dev["channel"] = channel
+                dev["time"] = cur_time
 
             # Good packet
             packet = {
                 "device_id": device_id,
                 "payload": payload.tobytes().hex(),
+                "channel": channel,
+                "last_channel_change_time": self._devices[device_id]["time"],
                 "symbols_corrected": (
                     num_sym_corrected if num_sym_corrected >= 0 else "Packet uncorrectable"
-                ),
+                )
             }
 
             if self._is_symbol_timing_debug:

@@ -3,7 +3,6 @@ import os
 from functools import wraps
 import numpy as np
 from io import BytesIO
-
 from pluto_sdr import PlutoManager
 
 app = flask.Flask(__name__)
@@ -188,10 +187,9 @@ def set_symbol_timing_debug():
 def decode_packets():
     frequency_step = flask.request.args.get("frequency_step", default=373, type=int)
     decode_interval = flask.request.args.get("interval", default=5, type=int)
-
     data = pluto_manager.pluto.capture_for_duration(decode_interval)
-
     packets, err = pluto_manager.pluto_utils.decode_packets(data, frequency_step)
+
     if err is not None:
         return flask.jsonify({"error": err}), 400
     
