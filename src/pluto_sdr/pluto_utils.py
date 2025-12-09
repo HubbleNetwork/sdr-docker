@@ -41,15 +41,15 @@ class PlutoUtils:
         errors = []
         for preamble in preambles:
             # Demodulate symbols
-            demodulated_symbols, timing_info = decoder.demodulate_symbols(preamble, self._is_symbol_timing_debug)
+            demodulated_symbols, payload_len, timing_info = decoder.demodulate_symbols(preamble, self._is_symbol_timing_debug)
             if demodulated_symbols is None:
                 errors.append(f"Header bits produced an out-of-range symbol count")
                 continue
-
-            # Extract device ID + payload
-            device_id, payload, num_sym_corrected = decoder.extract_device_id_and_payload(demodulated_symbols)
-            if device_id is None:
-                errors.append(f"Invalid payload header, payload could not be decoded")
+            
+            # extract payload
+            packet = decoder.extract_payload(demodulated_symbols, payload_len)
+            if packet is None:
+                errors.append(f"Invalid payload len, payload could not be decoded")
                 continue
             
             # Grab Channel
@@ -59,7 +59,8 @@ class PlutoUtils:
             cur_time = datetime.now()
 
             # Check if Channel has changed, if so, update time
-            dev = self._devices.get(device_id)
+            device_id = packet["device_id"]
+            dev = self._devices.get(device_id, None)
             if dev is None:
                 self._devices[device_id] = {"channel": channel, "time": cur_time}
             elif dev["channel"] != channel:
@@ -67,15 +68,8 @@ class PlutoUtils:
                 dev["time"] = cur_time
 
             # Good packet
-            packet = {
-                "device_id": device_id,
-                "payload": payload.tobytes().hex(),
-                "channel": channel,
-                "last_channel_change_time": self._devices[device_id]["time"],
-                "symbols_corrected": (
-                    num_sym_corrected if num_sym_corrected >= 0 else "Packet uncorrectable"
-                )
-            }
+            packet["channel"] = channel
+            packet["last_channel_change_time"] = self._devices[device_id]["time"]
 
             if self._is_symbol_timing_debug:
                 packet["symbol_timing_info"] = timing_info if timing_info is not None else "Unavailable"
