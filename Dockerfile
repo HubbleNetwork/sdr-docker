@@ -39,12 +39,12 @@ RUN mkdir -p /root/.ssh && ssh-keyscan github.com >> /root/.ssh/known_hosts
 RUN --mount=type=ssh ssh -T git@github.com || true
 
 # install the python package
-RUN pip3 install setuptools wheel
-RUN pip3 install .
+RUN python3 -m pip install --upgrade pip setuptools wheel
+RUN python3 -m pip install --ignore-installed -e .
 
 # install sim-decode
 RUN --mount=type=ssh git clone --branch develop --depth 1 git@github.com:HubbleNetwork/sim-decode.git /app/sim-decode
-RUN --mount=type=ssh pip3 install /app/sim-decode
+RUN --mount=type=ssh pip3 install -e /app/sim-decode
 
 # start the http server
 EXPOSE 5000
