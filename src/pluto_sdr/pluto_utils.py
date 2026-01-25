@@ -41,7 +41,7 @@ class PlutoUtils:
         errors = []
         for preamble in preambles:
             # Demodulate symbols
-            demodulated_symbols, payload_len, timing_info = decoder.demodulate_symbols(preamble, self._is_symbol_timing_debug)
+            demodulated_symbols, hopping_seq, payload_len, timing_info = decoder.demodulate_symbols(preamble, self._is_symbol_timing_debug)
             if demodulated_symbols is None:
                 errors.append(f"Header bits produced an out-of-range symbol count")
                 continue
@@ -52,8 +52,8 @@ class PlutoUtils:
                 errors.append(f"Invalid payload len, payload could not be decoded")
                 continue
             
-            # Grab Channel
-            channel = decoder.get_frequency_channel(preamble)
+            # Get 1st channel for compare
+            channel = hopping_seq[0]
             
             # Get Time
             cur_time = datetime.now()
@@ -68,7 +68,7 @@ class PlutoUtils:
                 dev["time"] = cur_time
 
             # Good packet
-            packet["channel"] = channel
+            packet["hopping_sequence"] = hopping_seq
             packet["last_channel_change_time"] = self._devices[device_id]["time"]
 
             if self._is_symbol_timing_debug:
