@@ -43,7 +43,7 @@ class PlutoUtils:
             # Demodulate symbols
             demodulated_symbols, hopping_seq, payload_len, timing_info = decoder.demodulate_symbols(preamble, self._is_symbol_timing_debug)
             if demodulated_symbols is None:
-                errors.append(f"Header bits produced an out-of-range symbol count")
+                errors.append(f"Unable to demodulate symbols")
                 continue
             
             # extract payload

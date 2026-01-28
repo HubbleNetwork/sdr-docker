@@ -187,7 +187,7 @@ def set_symbol_timing_debug():
 @ensure_rx_mode
 def decode_packets():
     frequency_step = flask.request.args.get("frequency_step", default=373, type=int)
-    decode_interval = flask.request.args.get("interval", default=5, type=int)
+    decode_interval = flask.request.args.get("interval", default=3, type=int)
 
     data = pluto_manager.pluto.capture_for_duration(decode_interval)
 
@@ -207,8 +207,8 @@ def stream():
     if mode == "start":
         frequency_step = flask.request.args.get("frequency_step", default=373, type=int)
 
-        # let have the window period be 5s
-        window_size = int(5 * pluto_manager.pluto.sample_rate)
+        # let have the window period be 3s
+        window_size = int(3 * pluto_manager.pluto.sample_rate)
         
         try:
             pluto_manager.pluto.start_stream()
