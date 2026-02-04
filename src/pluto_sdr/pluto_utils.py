@@ -6,7 +6,7 @@ import zmq
 
 from datetime import datetime
 
-from sim_decode.receiver.fast_decoder import FastDecoder
+from decoder import FastDecoderV1, FastDecoderDeprecated
 
 class PlutoUtils:
     DEFAULT_ZMQ_SOCKET = "tcp://127.0.0.1:5557"
@@ -31,7 +31,14 @@ class PlutoUtils:
             packets (list[dict])    - list of packets
             errors (list or None)   - error message if decoding failed
         """
-        decoder = FastDecoder(data, frequency_step)
+        match self._protocol_version:
+            case 0:
+                decoder = FastDecoderDeprecated(data, frequency_step)
+            case 1:
+                decoder = FastDecoderV1(data, frequency_step)
+            case _:
+                return [], [f"Unsupported protocol version: {self._protocol_version}"]
+
         preambles = decoder.find_all_preambles()
         valid = preambles != []
         if not valid:
@@ -40,40 +47,15 @@ class PlutoUtils:
         packets = []
         errors = []
         for preamble in preambles:
-            # Demodulate symbols
-            demodulated_symbols, hopping_seq, payload_len, timing_info = decoder.demodulate_symbols(preamble, self._is_symbol_timing_debug)
-            if demodulated_symbols is None:
-                errors.append(f"Unable to demodulate symbols")
+            match self._protocol_version:
+                case 0:
+                    packet, err = self._decode_one_packet_deprecated(decoder, preamble)
+                case 1:
+                    packet, err = self._decode_one_packet_v1(decoder, preamble)
+
+            if err is not None:
+                errors.append(err)
                 continue
-            
-            # extract payload
-            packet = decoder.extract_payload(demodulated_symbols, payload_len)
-            if packet is None:
-                errors.append(f"Invalid payload len, payload could not be decoded")
-                continue
-            
-            # Get 1st channel for compare
-            channel = hopping_seq[0]
-            
-            # Get Time
-            cur_time = datetime.now()
-
-            # Check if Channel has changed, if so, update time
-            device_id = packet["device_id"]
-            dev = self._devices.get(device_id, None)
-            if dev is None:
-                self._devices[device_id] = {"channel": channel, "time": cur_time}
-            elif dev["channel"] != channel:
-                dev["channel"] = channel
-                dev["time"] = cur_time
-
-            # Good packet
-            packet["hopping_sequence"] = hopping_seq
-            packet["last_channel_change_time"] = self._devices[device_id]["time"]
-
-            if self._is_symbol_timing_debug:
-                packet["symbol_timing_info"] = timing_info if timing_info is not None else "Unavailable"
-
             packets.append(packet)
 
         # return either the list of packets, or errors if none were valid
@@ -81,6 +63,110 @@ class PlutoUtils:
             return [], errors
 
         return packets, None
+
+    def set_protocol_version(self, version: int):
+        """
+        Set the protocol version for decoding packets.
+        Args:
+            version (int) - protocol version (1 = hopping, 0 = deprecated non-hopping)
+        """
+        if version in [0, 1]:
+            self._protocol_version = version
+
+    def _decode_one_packet_deprecated(self, decoder: FastDecoderDeprecated, preamble):
+        """
+        Decode one packet using the deprecated FastDecoder (non hopping protocol)
+        Args:
+            decoder (FastDecoderDeprecated) - instance of the deprecated decoder
+            preamble                        - preamble location
+        Returns:
+            packet (dict or None) - decoded packet
+            error (str or None)   - error message if decoding failed
+        """
+        # Demodulate symbols
+        demodulated_symbols, timing_info = decoder.demodulate_symbols(preamble, self._is_symbol_timing_debug)
+        if demodulated_symbols is None:
+            return None, "Header bits produced an out-of-range symbol count"
+
+        # Extract device ID + payload
+        device_id, payload, num_sym_corrected = decoder.extract_device_id_and_payload(demodulated_symbols)
+        if device_id is None:
+            return None, "Invalid payload header, payload could not be decoded"
+        
+        # Grab Channel
+        channel = decoder.get_frequency_channel(preamble)
+        
+        # Get Time
+        cur_time = datetime.now()
+
+        # Check if Channel has changed, if so, update time
+        dev = self._devices.get(device_id)
+        if dev is None:
+            self._devices[device_id] = {"channel": channel, "time": cur_time}
+        elif dev["channel"] != channel:
+            dev["channel"] = channel
+            dev["time"] = cur_time
+
+        # Good packet
+        packet = {
+            "device_id": device_id,
+            "payload": payload.tobytes().hex(),
+            "channel": channel,
+            "last_channel_change_time": self._devices[device_id]["time"],
+            "symbols_corrected": (
+                num_sym_corrected if num_sym_corrected >= 0 else "Packet uncorrectable"
+            )
+        }
+
+        if self._is_symbol_timing_debug:
+            packet["symbol_timing_info"] = timing_info if timing_info is not None else "Unavailable"
+
+        return packet, None
+
+    def _decode_one_packet_v1(self, decoder: FastDecoderV1, preamble):
+        """
+        Decode one packet using FastDecoderV1 (hopping protocol)
+        Args:
+            decoder (FastDecoderV1)     - instance of the decoder
+            preamble                    - preamble location
+        Returns:
+            packet (dict or None) - decoded packet
+            error (str or None)   - error message if decoding failed
+        """
+        # Demodulate symbols
+        demodulated_symbols, hopping_seq, payload_len, timing_info = decoder.demodulate_symbols(preamble, self._is_symbol_timing_debug)
+        if demodulated_symbols is None:
+            return None, "Unable to demodulate symbols"
+        
+        # extract payload
+        packet = decoder.extract_payload(demodulated_symbols, payload_len)
+        if packet is None:
+            return None, "Invalid payload len, payload could not be decoded"
+        
+        # Get 1st channel for compare
+        channel = hopping_seq[0]
+        
+        # Get Time
+        cur_time = datetime.now()
+
+        # Check if Channel has changed, if so, update time
+        device_id = packet["device_id"]
+        dev = self._devices.get(device_id, None)
+        if dev is None:
+            self._devices[device_id] = {"channel": channel, "time": cur_time}
+        elif dev["channel"] != channel:
+            dev["channel"] = channel
+            dev["time"] = cur_time
+
+        # Good packet
+        packet["hopping_sequence"] = hopping_seq
+        packet["last_channel_change_time"] = self._devices[device_id]["time"]
+
+        if self._is_symbol_timing_debug:
+            packet["symbol_timing_info"] = timing_info if timing_info is not None else "Unavailable"
+
+        return packet, None
+
 
     def set_symbol_timing_debug(self, enabled: bool):
         """

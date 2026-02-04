@@ -26,5 +26,7 @@ setup(
         "flask",
         "numpy==1.26.4",
         "scipy==1.13.1",
+        "reedsolo",
+        "matplotlib"
     ]
 )

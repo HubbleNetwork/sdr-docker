@@ -7,7 +7,6 @@ services:
     # Mount local code into the container
     volumes:
       - ./:/app # main repo -> /app
-      - ../sim-decode:/app/sim-decode
       - ${SSH_AUTH_SOCK}:${SSH_AUTH_SOCK}
       - ~/.ssh/known_hosts:/root/.ssh/known_hosts:ro
 
@@ -26,6 +25,5 @@ services:
     command: >
       bash -lc "
         pip3 install -e . &&
-        pip3 install -e /app/sim-decode &&
         python3 run_api.py
       "
