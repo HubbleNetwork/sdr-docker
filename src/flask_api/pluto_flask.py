@@ -172,6 +172,16 @@ def receive():
         mimetype="application/octet-stream",
     )
 
+@app.route("/protocol_version", methods=["POST"])
+@ensure_pluto_initialized
+@ensure_rx_mode
+def set_protocol_version():
+    version = flask.request.json.get("version", 1)
+    if version not in [0, 1]:
+        return flask.jsonify({"error": "Invalid protocol version, must be 0 (deprecated) or 1"}), 400
+
+    pluto_manager.pluto_utils.set_protocol_version(version)
+    return flask.jsonify({"message": "Protocol version set to " + str(version)}), 200
 
 @app.route("/debug", methods=["POST"])
 @ensure_pluto_initialized
