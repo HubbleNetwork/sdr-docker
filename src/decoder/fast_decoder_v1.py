@@ -14,6 +14,7 @@ NUM_HEADER_SYMBOLS = 6 # Number of header symbols err correction symbols
 
 DATA_LEN_ARRAY = [13, 18, 25, 30]
 ERROR_SYMBOLS_LEN_ARRAY = [10, 12, 14, 16]
+CUSTOMER_PAYLOAD_LEN = [0, 4, 9, 13] # in bytes, not symbols
 
 SYMBOL_SIZE = 6  # bits per symbol
 SYMBOL_TIME = 8e-3  # symbol duration
@@ -31,6 +32,7 @@ RS_PRIMITIVE_POLY_VALUE = 0x43
 # Payload metadata:
 # 2 bits (Payload Protocol) + 10 bits (seq num) + 32 bits (dynamic netID) + 32 bits (auth tag) + 2 bits RFU
 PACKET_METADATA_SYMBOLS = 13
+PACKET_METADATA_BITS = 76
 
 FRAME_SIZE_MAX = 16
 NUM_CHANNELS = 19
@@ -277,7 +279,8 @@ class FastDecoderV1:
         if self.synth_res == 370:
             return 25500
 
-        return min(64, math.floor(25500 / self.synth_res)) * self.synth_res
+        # return min(64, math.floor(25500 / self.synth_res)) * self.synth_res
+        return math.floor(25500 / self.synth_res) * self.synth_res
 
     def _analyze_packet_timing(self, data_start, total_symbols):
         """
@@ -380,7 +383,7 @@ class FastDecoderV1:
             float: The transmitter frequency of the packet's header or None if failed
         """
         # check if there is enough data after the preamble for header
-        last_preamble_end = preamble_symbols[-1] + self.samples_per_symbol
+        last_preamble_end = preamble_symbols[-1] + self.effective_symbol_samples
         if (last_preamble_end + (self.effective_symbol_samples * NUM_HEADER_SYMBOLS)) > len(self.data):
             return None, None
         
@@ -417,8 +420,10 @@ class FastDecoderV1:
                 }
 
         """
+        print("Header symbols before rs correction:", header_symbols)
         # rs err correction
         corrected_symbols, _ = self._reed_solomon_correct_symbols(header_symbols, (NUM_HEADER_SYMBOLS - HEADER_LEN))
+        print("Header symbols after rs correction:", corrected_symbols)
 
         # convert what's left to a binary string
         binary_string = "".join(f"{symbol:06b}" for symbol in corrected_symbols)
@@ -602,6 +607,7 @@ class FastDecoderV1:
             return None, None, None, None
 
         header_info = self._extract_header_info(header_symbols)
+        print("header_info:", header_info)
         sequence_index = header_info["hopping_sequence_index"]
 
         payload_length = header_info["payload_length"]
@@ -693,9 +699,13 @@ class FastDecoderV1:
             )
             demodulated_symbols.extend(demodulated_chunk)
 
+        print("Demodulated symbols before dewhitening:", demodulated_symbols)
+
         dewhitened_symbols = self._dewhitening_symbols(start_channel, demodulated_symbols)
         if dewhitened_symbols is None:
             return None, None, None, None
+
+        print("Demodulated symbols:", dewhitened_symbols)
 
         # if symbol timing debug is requested, perform the analysis
         if symbol_timing_debug:
@@ -748,22 +758,32 @@ class FastDecoderV1:
         # auth tag: next 32 bits
         auth_tag = int(binary_string[44:76], 2)
 
-        # payload: 6 * payload_length bits
-        payload = binary_string[76: (76 + 6 * payload_length)]
+        # find the customer payload length
+        try:
+            length_index = DATA_LEN_ARRAY.index(payload_length)
+        except ValueError:
+            return None
 
-        # strip padding bits. The payload contains 1 followed by 0s until the nearest
-        # packet length.
-        payload = payload.rstrip("0")[:-1]
+        # after the meta data, we have the payload
+        customer_payload_bytes = CUSTOMER_PAYLOAD_LEN[length_index]
+        start = PACKET_METADATA_BITS
+        end = start + customer_payload_bytes * 8
 
-        payload_bytes = [int(payload[i : i + 8], 2) for i in range(0, len(payload), 8)]
-        payload_bytes = np.array(payload_bytes, dtype=np.uint8)
+        # ensure we have enough bits
+        if end > len(binary_string):
+            return None
+
+        payload_bits = binary_string[start:end]
+        payload_bytes = bytes(
+            int(payload_bits[i : i + 8], 2) for i in range(0, len(payload_bits), 8)
+        )
 
         return {
             "payload_protocol_version": payload_protocol_version,
             "seq_num": seq_num,
             "device_id": device_id,
             "auth_tag": auth_tag,
-            "payload": payload_bytes.tobytes().hex(),
+            "payload": payload_bytes.hex(),
             "symbols_corrected": (
                 errata_pos_len if errata_pos_len >= 0 else "Packet uncorrectable"
             )
