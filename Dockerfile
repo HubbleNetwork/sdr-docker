@@ -1,20 +1,25 @@
 FROM ubuntu:22.04
 
+# Workaround for hash-sum-mismatch on ARM mirrors
+RUN echo 'Acquire::http::Pipeline-Depth "0";' > /etc/apt/apt.conf.d/99fixmirror && \
+    echo 'Acquire::http::No-Cache=True;' >> /etc/apt/apt.conf.d/99fixmirror && \
+    echo 'Acquire::BrokenProxy=true;' >> /etc/apt/apt.conf.d/99fixmirror
+
 # Install prerequisites
-RUN apt update && \
-    DEBIAN_FRONTEND=noninteractive apt install -y software-properties-common wget python3-pip && \
+RUN rm -rf /var/lib/apt/lists/* && \
+    apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y \
+        software-properties-common wget python3-pip && \
     rm -rf /var/lib/apt/lists/*
 
-# Add the GNU Radio PPA repository
+# Add the GNU Radio PPA repository and install GNU Radio
 RUN add-apt-repository -y ppa:gnuradio/gnuradio-releases && \
-    apt update
-
-# Install GNU Radio and dependencies
-RUN DEBIAN_FRONTEND=noninteractive apt install -y gnuradio gnuradio-dev
+    apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --fix-missing gnuradio gnuradio-dev
 
 # Download and install libiio
 RUN wget https://github.com/analogdevicesinc/libiio/releases/download/v0.26/libiio-0.26.ga0eca0d-Linux-Ubuntu-22.04.deb && \
-    DEBIAN_FRONTEND=noninteractive apt install -y ./libiio-0.26.ga0eca0d-Linux-Ubuntu-22.04.deb && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y ./libiio-0.26.ga0eca0d-Linux-Ubuntu-22.04.deb && \
     rm libiio-0.26.ga0eca0d-Linux-Ubuntu-22.04.deb
 
 # Without these lines the GNU Radio vmcircbuf backend fails to initialise
@@ -27,11 +32,6 @@ WORKDIR /app
 COPY setup.py /app/
 COPY run_stream.py /app/
 COPY src/ /app/src/
-COPY source_files/ /app/source_files/
-
-# Extract all .tar.gz files into /app/source_files/ and remove the archives
-RUN find /app/source_files -name "*.tar.gz" -exec tar -xzf {} -C /app/source_files/ \; && \
-    find /app/source_files -name "*.tar.gz" -delete
 
 # Install the python package
 RUN python3 -m pip install --upgrade pip setuptools wheel

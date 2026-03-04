@@ -72,24 +72,11 @@ Log out and back in, then verify:
 groups | grep docker
 ```
 
-### Install git-lfs
-
-The TX source files are stored with git-lfs:
-
-```shell
-# Debian / Ubuntu
-sudo apt install git-lfs
-
-# macOS
-brew install git-lfs
-```
-
 ### Clone and build
 
 ```shell
 git clone <repo-url>
 cd pluto-sdr-docker/
-git lfs pull
 docker build -t pluto_container .
 ```
 
@@ -157,8 +144,3 @@ The dashboard auto-refreshes every 500 ms and provides:
 - **Gain control** — adjust RX gain from the browser.
 - **Time-domain viewer** — enter a device ID to see a per-symbol magnitude plot.
 
-## Source files
-
-The `source_files/` directory contains pre-generated TX waveforms (`.out` files
-produced by Matlab). These are used by the legacy TX API and are not required
-for the streaming decoder.
