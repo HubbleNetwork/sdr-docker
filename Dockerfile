@@ -32,6 +32,7 @@ RUN ARCH=$(dpkg --print-architecture) && \
 RUN mkdir -p /root/.gnuradio/prefs && \
     echo "vmcircbuf_default_factory=shmem" > /root/.gnuradio/prefs/vmcircbuf_default_factory
 ENV HOME=/root
+ENV PYTHONUNBUFFERED=1
 
 # Copy source code into the container
 WORKDIR /app
