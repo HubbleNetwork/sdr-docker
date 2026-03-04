@@ -19,14 +19,20 @@ def get_version():
 setup(
     name="pluto-sdr-docker",
     version=get_version(),
-    description="Pluto SDR Docker",
+    description="PlutoSDR streaming spectrogram + packet decoder",
     packages=find_packages(where="src"),
     package_dir={"": "src"},
+    package_data={
+        "stream_web": ["templates/*.html", "static/*.css"],
+    },
     install_requires=[
         "flask",
         "numpy==1.26.4",
         "scipy==1.13.1",
         "reedsolo",
-        "matplotlib"
-    ]
+        "matplotlib",
+        "opencv-python-headless",
+        "Pillow",
+        "pyadi-iio",
+    ],
 )

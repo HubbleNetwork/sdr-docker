@@ -4,26 +4,17 @@ services:
     container_name: pluto_container
     working_dir: /app
 
-    # Mount local code into the container
     volumes:
-      - ./:/app # main repo -> /app
-      - ${SSH_AUTH_SOCK}:${SSH_AUTH_SOCK}
-      - ~/.ssh/known_hosts:/root/.ssh/known_hosts:ro
+      - ./:/app
 
-    environment:
-      SSH_AUTH_SOCK: ${SSH_AUTH_SOCK}
-    
-    # expose API over port 5000
     ports:
-      - "5000:5000"
+      - "8050:8050"
 
-    # allow interactive shell
     stdin_open: true
     tty: true
 
-    # Command that runs when the container starts
     command: >
       bash -lc "
         pip3 install -e . &&
-        python3 run_api.py
+        python3 run_stream.py
       "
