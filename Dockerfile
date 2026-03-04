@@ -18,9 +18,15 @@ RUN add-apt-repository -y ppa:gnuradio/gnuradio-releases && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --fix-missing gnuradio gnuradio-dev
 
 # Download and install libiio
-RUN wget https://github.com/analogdevicesinc/libiio/releases/download/v0.26/libiio-0.26.ga0eca0d-Linux-Ubuntu-22.04.deb && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y ./libiio-0.26.ga0eca0d-Linux-Ubuntu-22.04.deb && \
-    rm libiio-0.26.ga0eca0d-Linux-Ubuntu-22.04.deb
+RUN ARCH=$(dpkg --print-architecture) && \
+    if [ "$ARCH" = "arm64" ] || [ "$ARCH" = "aarch64" ]; then \
+        DEB="libiio-0.26.g-Ubuntu-arm64v8.deb"; \
+    else \
+        DEB="libiio-0.26.ga0eca0d-Linux-Ubuntu-22.04.deb"; \
+    fi && \
+    wget "https://github.com/analogdevicesinc/libiio/releases/download/v0.26/$DEB" && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y "./$DEB" && \
+    rm "$DEB"
 
 # Without these lines the GNU Radio vmcircbuf backend fails to initialise
 RUN mkdir -p /root/.gnuradio/prefs && \
