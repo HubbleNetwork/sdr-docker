@@ -1,2 +1,0 @@
-source_files/*.out filter=lfs diff=lfs merge=lfs -text
-source_files/*.tar.gz filter=lfs diff=lfs merge=lfs -text
