@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>PlutoSDR Live Spectrogram + Decoder</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <h1>PlutoSDR Live Spectrogram + Decoder</h1>
+  <img id="spec" src="/spectrogram.jpg" />
+  <div class="stats">
+    Total: <span id="pt">&mdash;</span> ms
+    &nbsp;|&nbsp; Spec: <span id="ts">&mdash;</span> ms
+    &nbsp;|&nbsp; Render: <span id="tr">&mdash;</span> ms
+    &nbsp;|&nbsp; Decode: <span id="td">&mdash;</span> ms
+    &nbsp;|&nbsp; Detections: <span id="nd">&mdash;</span> (<span id="nu">&mdash;</span> unique devices)
+    &nbsp;|&nbsp; Gain: <span id="gn">&mdash;</span> dB (<span id="pk">&mdash;</span>%)
+    &nbsp;|&nbsp; Status: <span id="rt" class="ok">&mdash;</span>
+  </div>
+  <div class="btn-bar">
+    <button id="reset-btn" onclick="resetDetections()">RESET</button>
+    <span class="gain-label">Gain:</span>
+    <button class="gain-btn" onclick="adjustGain(-1)">&#x25BC;</button>
+    <button class="gain-btn" onclick="adjustGain(1)">&#x25B2;</button>
+  </div>
+  <div class="tab-bar">
+    <button class="tab-btn active" onclick="switchTab('decodes')">Decodes</button>
+    <button class="tab-btn" onclick="switchTab('stats')">Statistics</button>
+  </div>
+  <div id="tab-decodes" class="tab-content active">
+    <table>
+      <thead>
+        <tr>
+          <th>PHY</th>
+          <th>Device ID</th>
+          <th>Chipset</th>
+          <th>Last RSSI (dBFS)</th>
+          <th>Last 10 Seq Numbers</th>
+          <th>Last Seen</th>
+        </tr>
+      </thead>
+      <tbody id="dev-body">
+        <tr><td colspan="6" class="no-data">Waiting for detections&hellip;</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div id="tab-stats" class="tab-content">
+    <table>
+      <thead>
+        <tr>
+          <th>Chipset</th>
+          <th>Detected</th>
+          <th>Decoded</th>
+          <th>Header Fail</th>
+          <th>PDU Fail</th>
+          <th>Clamped</th>
+          <th>Rate</th>
+        </tr>
+      </thead>
+      <tbody id="cs-body">
+        <tr><td colspan="7" class="no-data">Waiting for data&hellip;</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div id="td-panel">
+    <h2>Time-Domain Signal Viewer</h2>
+    <div id="td-controls">
+      <input id="td-dev-input" type="text" placeholder="Device ID (decimal)" />
+      <button id="td-btn" class="off" onclick="toggleTd()">Start</button>
+    </div>
+    <img id="td-img" src="" alt="" style="display:none" />
+  </div>
+
+  <script>
+    function switchTab(name) {
+      document.querySelectorAll('.tab-btn').forEach(function(b, i) {
+        b.className = 'tab-btn' + (i === (name === 'decodes' ? 0 : 1) ? ' active' : '');
+      });
+      document.getElementById('tab-decodes').className =
+        'tab-content' + (name === 'decodes' ? ' active' : '');
+      document.getElementById('tab-stats').className =
+        'tab-content' + (name === 'stats' ? ' active' : '');
+    }
+
+    var img  = document.getElementById('spec');
+    var ptEl = document.getElementById('pt');
+    var tsEl = document.getElementById('ts');
+    var trEl = document.getElementById('tr');
+    var tdEl = document.getElementById('td');
+    var ndEl = document.getElementById('nd');
+    var nuEl = document.getElementById('nu');
+    var rtEl = document.getElementById('rt');
+    var gnEl = document.getElementById('gn');
+    var pkEl = document.getElementById('pk');
+    var tbody = document.getElementById('dev-body');
+    var tdBtnEl   = document.getElementById('td-btn');
+    var tdInputEl = document.getElementById('td-dev-input');
+    var tdImgEl   = document.getElementById('td-img');
+    var tdActive  = false;
+
+    function refreshImg() {
+      var i = new Image();
+      i.onload  = function() { img.src = i.src; setTimeout(refreshImg, 500); };
+      i.onerror = function() { setTimeout(refreshImg, 1000); };
+      i.src = '/spectrogram.jpg?t=' + Date.now();
+    }
+    refreshImg();
+
+    function hasSelection() {
+      var sel = window.getSelection();
+      return sel && sel.toString().length > 0;
+    }
+
+    function refreshData() {
+      fetch('/api/status').then(function(r) { return r.json(); }).then(function(d) {
+        var skipTables = hasSelection();
+
+        var fmt = function(v) { return v != null ? Number(v).toFixed(1) : '\u2014'; };
+        ptEl.textContent = fmt(d.stats.process_time_ms);
+        tsEl.textContent = fmt(d.stats.t_spec_ms);
+        trEl.textContent = fmt(d.stats.t_render_ms);
+        tdEl.textContent = fmt(d.stats.t_decode_ms);
+        ndEl.textContent = d.stats.n_detections;
+        nuEl.textContent = d.stats.n_unique_devices || 0;
+        gnEl.textContent = d.stats.rx_gain_dB != null
+          ? Number(d.stats.rx_gain_dB).toFixed(0) : '\u2014';
+        pkEl.textContent = d.stats.rx_peak_pct != null
+          ? Number(d.stats.rx_peak_pct).toFixed(0) : '\u2014';
+
+        var ms = d.stats.process_time_ms;
+        if (ms > 0 && ms < 1000) {
+          rtEl.textContent = 'sub-realtime \u2713';
+          rtEl.className = 'ok';
+        } else if (ms >= 1000) {
+          rtEl.textContent = 'OVER realtime \u2717';
+          rtEl.className = 'warn';
+        }
+
+        if (!skipTables && d.devices && d.devices.length > 0) {
+          var html = '';
+          for (var i = 0; i < d.devices.length; i++) {
+            var dev = d.devices[i];
+            var seqs = dev.seq_nums.join(', ');
+            var phyCls = dev.phy_ver === -1 ? 'c-phy c-phy-neg1' : 'c-phy c-phy-v1';
+            var phyLabel = dev.phy_ver === -1 ? 'v-1' : 'v1';
+            var chipset = dev.chipset || '\u2014';
+            html += '<tr>'
+              + '<td class="' + phyCls + '">' + phyLabel + '</td>'
+              + '<td class="c-id">' + dev.ntw_id_hex + '<br><small>' + dev.ntw_id + '</small></td>'
+              + '<td class="c-chip">' + chipset + '</td>'
+              + '<td class="c-nrg">' + dev.max_energy_dB.toFixed(1) + '</td>'
+              + '<td class="c-seq">' + seqs + '</td>'
+              + '<td class="c-ts">' + dev.last_seen + '</td>'
+              + '</tr>';
+          }
+          tbody.innerHTML = html;
+        }
+
+        if (!skipTables && d.chipset_stats) {
+          var cs = d.chipset_stats;
+          var chips = Object.keys(cs).sort();
+          if (chips.length) {
+            var h = '';
+            for (var j = 0; j < chips.length; j++) {
+              var c = chips[j], s = cs[c];
+              var rate = s.detected > 0 ? (100 * s.ok / s.detected).toFixed(1) + '%' : '\u2014';
+              var rCls = s.detected > 0 && (s.ok / s.detected) >= 0.5 ? 'c-id' : 'c-nrg';
+              h += '<tr>'
+                + '<td class="c-chip">' + c + '</td>'
+                + '<td>' + s.detected + '</td>'
+                + '<td class="c-id">' + s.ok + '</td>'
+                + '<td class="c-nrg">' + s.header_fail + '</td>'
+                + '<td class="c-nrg">' + s.pdu_fail + '</td>'
+                + '<td>' + s.clamped_fail + '</td>'
+                + '<td class="' + rCls + '">' + rate + '</td>'
+                + '</tr>';
+            }
+            document.getElementById('cs-body').innerHTML = h;
+          }
+        }
+
+        if (d.td_img) {
+          tdImgEl.src = 'data:image/png;base64,' + d.td_img;
+          tdImgEl.style.display = 'block';
+        }
+      }).catch(function() {});
+      setTimeout(refreshData, 500);
+    }
+    refreshData();
+
+    function resetDetections() {
+      fetch('/api/reset', { method: 'POST' }).then(function() {
+        tbody.innerHTML = '<tr><td colspan="6" class="no-data">Cleared.</td></tr>';
+        document.getElementById('cs-body').innerHTML =
+          '<tr><td colspan="7" class="no-data">Cleared.</td></tr>';
+      });
+    }
+
+    function adjustGain(dir) {
+      fetch('/api/gain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ direction: dir })
+      });
+    }
+
+    function toggleTd() {
+      if (tdActive) {
+        fetch('/api/timedomain', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'stop' })
+        }).then(function(r) { return r.json(); }).then(function() {
+          tdActive = false;
+          tdBtnEl.textContent = 'Start';
+          tdBtnEl.className = 'off';
+        });
+      } else {
+        var devId = tdInputEl.value.trim();
+        if (!devId) return;
+        fetch('/api/timedomain', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'start', device_id: devId })
+        }).then(function(r) { return r.json(); }).then(function(d) {
+          if (d.error) return;
+          tdActive = true;
+          tdBtnEl.textContent = 'Stop';
+          tdBtnEl.className = 'on';
+        });
+      }
+    }
+  </script>
+</body>
+</html>

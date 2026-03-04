@@ -1,0 +1,209 @@
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 16px;
+  background: #0f0f23;
+  color: #ccc;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+}
+
+h1 {
+  margin: 0 0 12px;
+  font-size: 1.3em;
+  color: #eee;
+}
+
+img {
+  width: 100%;
+  border: 1px solid #333;
+  border-radius: 4px;
+}
+
+/* -- Stats bar ------------------------------------------------------------- */
+
+.stats {
+  background: #1a1a2e;
+  padding: 10px 14px;
+  border-radius: 6px;
+  margin: 10px 0;
+  font-size: 0.9em;
+  font-family: 'Fira Mono', monospace;
+}
+.stats span {
+  color: #7fdbca;
+  font-weight: bold;
+  display: inline-block;
+  min-width: 3.5em;
+  text-align: right;
+}
+.ok   { color: #5eead4; }
+.warn { color: #fbbf24; }
+
+/* -- Tables ---------------------------------------------------------------- */
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: 'Fira Mono', monospace;
+  font-size: 0.85em;
+}
+thead th {
+  text-align: left;
+  padding: 8px 10px;
+  background: #1a1a2e;
+  color: #7fdbca;
+  border-bottom: 2px solid #333;
+  position: sticky;
+  top: 0;
+}
+tbody td {
+  padding: 6px 10px;
+  border-bottom: 1px solid #222;
+  vertical-align: top;
+}
+tbody tr:hover { background: rgba(127,219,202,0.06); }
+
+.c-phy       { white-space: nowrap; font-weight: bold; }
+.c-phy-neg1  { color: #fbbf24; }
+.c-phy-v1    { color: #f87171; }
+.c-id        { color: #7fdbca; white-space: nowrap; }
+.c-nrg       { color: #fbbf24; white-space: nowrap; }
+.c-seq       { color: #c4b5fd; word-break: break-all; }
+.c-chip      { color: #93c5fd; white-space: nowrap; }
+.c-ts        { color: #666; white-space: nowrap; }
+
+/* -- Tabs ------------------------------------------------------------------ */
+
+.tab-bar {
+  display: flex;
+  gap: 0;
+  margin-top: 10px;
+}
+.tab-btn {
+  padding: 8px 20px;
+  border: none;
+  cursor: pointer;
+  font-weight: bold;
+  font-size: 0.9em;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  background: #111827;
+  color: #666;
+  border-bottom: 2px solid #333;
+  transition: all 0.15s;
+}
+.tab-btn.active {
+  background: #1a1a2e;
+  color: #7fdbca;
+  border-bottom: 2px solid #7fdbca;
+}
+.tab-btn:hover:not(.active) { color: #999; }
+
+.tab-content {
+  display: none;
+  background: #1a1a2e;
+  border-radius: 0 0 6px 6px;
+  padding: 10px 14px;
+  max-height: 380px;
+  overflow-y: auto;
+}
+.tab-content.active { display: block; }
+
+.no-data {
+  color: #555;
+  text-align: center;
+  padding: 20px;
+}
+
+/* -- Buttons --------------------------------------------------------------- */
+
+.btn-bar {
+  display: flex;
+  gap: 8px;
+  margin: 6px 0 10px;
+}
+#reset-btn {
+  padding: 6px 18px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: bold;
+  font-size: 0.95em;
+  background: #4b5563;
+  color: #d1d5db;
+  transition: all 0.2s;
+}
+#reset-btn:hover { background: #6b7280; color: #fff; }
+
+.gain-btn {
+  padding: 6px 14px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: bold;
+  font-size: 0.95em;
+  background: #1e3a5f;
+  color: #93c5fd;
+  transition: all 0.2s;
+}
+.gain-btn:hover { background: #2563eb; color: #fff; }
+
+.gain-label {
+  color: #93c5fd;
+  font-weight: bold;
+  font-size: 0.9em;
+  font-family: 'Fira Mono', monospace;
+  align-self: center;
+}
+
+/* -- Time-domain panel ----------------------------------------------------- */
+
+#td-panel {
+  background: #1a1a2e;
+  border-radius: 6px;
+  padding: 14px;
+  margin-top: 10px;
+}
+#td-panel h2 {
+  margin: 0 0 10px;
+  font-size: 1.1em;
+  color: #eee;
+}
+#td-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+#td-dev-input {
+  background: #0f0f23;
+  color: #7fdbca;
+  border: 1px solid #333;
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-family: 'Fira Mono', monospace;
+  font-size: 0.95em;
+  width: 200px;
+}
+#td-dev-input::placeholder { color: #555; }
+
+#td-btn {
+  padding: 6px 18px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: bold;
+  font-size: 0.95em;
+  transition: all 0.2s;
+}
+#td-btn.off { background: #065f46; color: #6ee7b7; }
+#td-btn.on  { background: #dc2626; color: #fff; }
+
+#td-img {
+  width: 100%;
+  border: 1px solid #333;
+  border-radius: 4px;
+  min-height: 60px;
+  background: #0f0f23;
+  display: none;
+}

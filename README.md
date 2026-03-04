@@ -1,27 +1,62 @@
 # pluto-sdr-docker
 
-Docker container for working with the PlutoSDR. With the docker container running, you can use the PlutoSDR to transmit tones and hubble packets, as well as receiving and recoding packets. Examples for transmitting and receiving are found in the `hast_test_sw` repository.
+Docker container for the PlutoSDR that streams IQ data, displays a live rolling
+spectrogram, and decodes packets in real time. Results are served as a web
+dashboard on port **8050**.
+
+## Architecture
+
+| Component      | Thread     | Description                                                        |
+|----------------|------------|--------------------------------------------------------------------|
+| **PlutoSDR RX** | background | Reads IQ samples into a 2 s circular buffer                       |
+| **Processor**   | background | Every 0.5 s: compute spectrogram chunk, render 10 s image, decode  |
+| **Flask server** | main      | Serves web page with live spectrogram + decoded device table       |
+
+### Data flow
+
+```
+PlutoSDR  ──RX──>  IQ circular buffer (2 s)
+                        │
+                        ├──> 0.5 s chunk ──> vis spectrogram (NFFT=4096)
+                        │                        │
+                        │                   deque of 20 chunks ──> JPEG image
+                        │
+                        └──> 1.0 s chunk ──> detection spectrogram (NFFT=625)
+                                                 │
+                                            template matching + NMS
+                                                 │
+                                            FSK demodulation + RS decode
+                                                 │
+                                            decoded device IDs + seq nums
+```
+
+### Project structure
+
+```
+src/stream_web/
+├── config.py          # All SDR / decoder / display constants
+├── decoder.py         # Dual-protocol preamble detection + packet decode
+├── spectrogram.py     # Spectrogram computation and image rendering
+├── sdr.py             # PlutoSDR RX thread (pyadi-iio)
+├── processor.py       # Processing loop (spec + decode + render)
+├── app.py             # Flask app, routes, thread orchestration
+├── templates/
+│   └── index.html     # Dashboard HTML
+└── static/
+    └── style.css      # Dashboard CSS
+```
 
 ## Setup
 
-### Install docker
+### Install Docker
 
-Official instructions [are located here.](https://docs.docker.com/engine/install/)
+Official instructions: <https://docs.docker.com/engine/install/>
 
-Here's how you can quickly install using the official convenience script:
+Quick install with the convenience script:
 
 ```shell
 curl -fsSL https://get.docker.com -o get-docker.sh
 sudo sh ./get-docker.sh
-```
-
-Verify the installation:
-
-```shell
-sudo docker run hello-world
-# Hello from Docker!
-# This message shows that your installation appears to be working correctly.
-# ...
 ```
 
 ### Add user to docker group
@@ -31,220 +66,99 @@ sudo groupadd docker
 sudo usermod -aG docker $USER
 ```
 
-Logout and log back in and verify that your user is added to the docker group.
-If you have issues here, you might need a full reboot.
+Log out and back in, then verify:
 
 ```shell
 groups | grep docker
-# ... docker ...
 ```
 
-Now you should be able to run docker containers without sudo:
+### Install git-lfs
+
+The TX source files are stored with git-lfs:
 
 ```shell
-docker run hello-world
+# Debian / Ubuntu
+sudo apt install git-lfs
+
+# macOS
+brew install git-lfs
 ```
 
-### Add SSH key to SSH agent
-
-Building the container requires cloning various Hubble git repos during the build process, so the container will need SSH authorization. Add your SSH key to ssh-agent (example using a key named `id_ed25519`):
+### Clone and build
 
 ```shell
-eval "$(ssh-agent -s)"
-ssh-add ~/.ssh/id_ed25519
-```
-
-### Clone and build docker container
-
-The tx files are stored using git-lfs, so you'll need to install git-lfs before cloning the repo. `sudo apt install git-lfs` or `brew install git-lfs` should work.
-
-```shell
-git clone git@github.com:HubbleNetwork/pluto-sdr-docker.git
+git clone <repo-url>
 cd pluto-sdr-docker/
 git lfs pull
-docker build -t pluto_container --ssh default .
+docker build -t pluto_container .
 ```
 
-**Note:**
-- If you are not on x86 architecture, go to [Libiio releases](https://github.com/analogdevicesinc/libiio/releases/tag/v0.26) and choose the right architecture.
-- Go to the [Dockerfile](./Dockerfile) and edit this line to the right arch:
+> **Non-x86 architectures:** download the correct libiio `.deb` from
+> [libiio releases](https://github.com/analogdevicesinc/libiio/releases/tag/v0.26)
+> and update the `wget` line in the [Dockerfile](./Dockerfile).
 
-```
-# Download and install libiio
-RUN wget https://github.com/analogdevicesinc/libiio/releases/download/v0.26/libiio-0.26.ga0eca0d-Linux-Ubuntu-22.04.deb && \
-    DEBIAN_FRONTEND=noninteractive apt install -y ./libiio-0.26.ga0eca0d-Linux-Ubuntu-22.04.deb && \
-    rm libiio-0.26.ga0eca0d-Linux-Ubuntu-22.04.deb
-```
+## Run
 
-- Example for arm64 arch:
-```
-# Download and install libiio
-RUN wget https://github.com/analogdevicesinc/libiio/releases/download/v0.26/libiio-0.26.g-Ubuntu-arm64v8.deb && \
-    DEBIAN_FRONTEND=noninteractive apt install -y ./libiio-0.26.g-Ubuntu-arm64v8.deb && \
-    rm libiio-0.26.g-Ubuntu-arm64v8.deb
-```
-
-## Run the container
-
-### Run the container in the background
+### Background
 
 ```shell
-docker run -d -p 5000:5000 pluto_container
+docker run -d -p 8050:8050 pluto_container
 ```
 
-### Run the container in a terminal window
+### Interactive
 
 ```shell
-docker run -it -p 5000:5000 pluto_container
+docker run -it -p 8050:8050 pluto_container
 ```
 
-## Stop the container
+Then open <http://localhost:8050> in a browser.
 
-If you need to stop the docker container, get the container ID and use `docker kill`.
+### With Docker Compose (development)
+
+```shell
+docker build -t pluto_container .
+docker compose up
+```
+
+The compose file mounts the local repo into the container so code changes take
+effect on restart (`docker compose restart`).
+
+## Stop
 
 ```shell
 docker ps
-# CONTAINER ID   IMAGE             ...
-# a2bbd6636d3e   pluto_container   ...
-docker kill a2bbd6636d3e
-# a2bbd6636d3e
+docker kill <container_id>
 ```
 
-Or with one line (be careful if you have multiple containers running):
+## Configuration
 
-```shell
-docker kill $(docker ps -q)
-```
+All tuneable parameters live in [`src/stream_web/config.py`](src/stream_web/config.py).
+Key settings:
 
-## Development
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `PLUTO_URI` | `ip:192.168.2.1` | PlutoSDR network address |
+| `PLUTO_FREQ_HZ` | 2.482754875 GHz | Centre frequency |
+| `SAMPLE_RATE` | 781 250 Hz | ADC sample rate |
+| `RX_INITIAL_GAIN_DB` | 40 | Initial RX gain (adjustable from the UI) |
+| `FLASK_PORT` | 8050 | Web server port |
+| `SPEC_DURATION_S` | 10.0 | Rolling spectrogram window |
+| `DECODE_INTERVAL_S` | 0.5 | Decode cycle interval |
 
-When developing, instead of running the container using `docker run`, we can leverage Docker Compose workflow.
+## Web dashboard
 
-**Warning:** The current workflow forwards your SSH socket to the container. This is dangerous and
-only suitable for local development.
+The dashboard auto-refreshes every 500 ms and provides:
 
-### Prepare local repos
+- **Live spectrogram** — 10 s rolling window with coloured detection boxes
+  (orange = PHY v-1, red = PHY v1).
+- **Decodes tab** — per-device summary: PHY version, device ID, chipset, RSSI,
+  last 10 sequence numbers, last-seen timestamp.
+- **Statistics tab** — per-chipset decode success rates.
+- **Gain control** — adjust RX gain from the browser.
+- **Time-domain viewer** — enter a device ID to see a per-symbol magnitude plot.
 
-Make sure the [sim-decode](http://github.com/HubbleNetwork/sim-decode) repo has been cloned locally.
-Your directory may look like this:
+## Source files
 
-```
-../
-├── sim-decode/
-└── pluto-sdr-docker/
-```
-
-If you put `sim-decode` elsewhere, edit the mount line in [compose.yml](./compose.yml):
-```
-- ../sim-decode:/app/sim-decode
-```
-
-to the path that leads to your local `sim-decode` repo. e.g.
-
-```
-- /path/to/sim-decode:/app/sim-decode
-```
-
-### Run the container
-
-1. Build the container once:
-    ```shell
-    docker build -t pluto_container --ssh default .
-    ```
-
-2. Run the workflow:
-    ```shell
-    docker compose up
-    ```
-
-3. When you made any changes to the `pluto-sdr-docker` or `sim-decode`, you can either do:
-    ```shell
-    Ctrl+C
-    docker compose down
-    docker compose up
-    ```
-
-    or:
-
-    ```shell
-    docker compose restart
-    ```
-
-**Note:** if you make any changes that require Docker to rebuild, you still need to rebuild the container.
-
-## Information about source files
-
-The pluto can transmit packets using files saved in the source_files/ directory. The files are generated using Matlab, which saves them as `.out` files. To add additional source files, you can just place `.out` files in the source_files/ directory and rebuild the container, or compress them into a .tar.gz archive and place them in the source_files/ directory. The archive will be extracted when the container is built.
-
-The following source files are currently included in the container:
-
-### Preamble-only transmissions saved in preambles.tar.gz
-
-- only_preambles_10_per_1sec.out
-- only_preambles_11_per_1sec.out
-- only_preambles_12_per_1sec.out
-- only_preambles_13_per_1sec.out
-- only_preambles_1_per_1sec.out
-- only_preambles_2_per_1sec.out
-- only_preambles_3_per_1sec.out
-- only_preambles_4_per_1sec.out
-- only_preambles_5_per_1sec.out
-- only_preambles_6_per_1sec.out
-- only_preambles_7_per_1sec.out
-- only_preambles_8_per_1sec.out
-- only_preambles_9_per_1sec.out
-- only_preambles_10_per_1sec_short_file.out
-- only_preambles_11_per_1sec_short_file.out
-- only_preambles_12_per_1sec_short_file.out
-- only_preambles_13_per_1sec_short_file.out
-- only_preambles_1_per_1sec_short_file.out
-- only_preambles_2_per_1sec_short_file.out
-- only_preambles_3_per_1sec_short_file.out
-- only_preambles_4_per_1sec_short_file.out
-- only_preambles_5_per_1sec_short_file.out
-- only_preambles_6_per_1sec_short_file.out
-- only_preambles_7_per_1sec_short_file.out
-- only_preambles_8_per_1sec_short_file.out
-- only_preambles_9_per_1sec_short_file.out
-- tx_hubble_pkts_preamble_repeat.out
-
-### Hubble packet transmissions with Nordic frequency step (373 Hz) saved in nordic.tar.gz
-
-- tx_hubble_pkts_nordic_24symbols_seq_num_1pkt_per_sec_extra_100000_preambles.out
-- tx_hubble_pkts_nordic_24symbols_seq_num_1pkt_per_sec_extra_10000_preambles.out
-- SEA_hubble_pkts_nordic_24symbols_seq_num_1pkt_per_1s.out
-- fixed_SEA_hubble_pkts_nordic_24symbols_seq_num_1pkt_per_1s.out (same as above, but with the sequence number bits in the correct place. Both kept for any tests using the old one.)
-- tx_hubble_pkts_nordic_24symbols_seq_num_1pkt_per_sec_extra_1000_preambles.out
-- tx_hubble_pkts_nordic_24symbols_1pkt_per_sec_doppler.out
-- tx_hubble_pkts_nordic_24symbols_seq_num_1pkt_per_sec.out
-- tx_hubble_pkts_nordic_24symbols.out
-- tx_hubble_pkts_nordic_24symbols_seq_num_1pkt_per_sec_extra_100_preambles.out
-- cal_node_id_10000001_seq_num_1pkt_per_1s.out
-- cal_node_id_10000002_seq_num_1pkt_per_1s.out
-- cal_node_id_10000003_seq_num_1pkt_per_1s.out
-- cal_node_id_10000004_seq_num_1pkt_per_1s.out
-- cal_node_id_10000005_seq_num_1pkt_per_1s.out
-- cal_node_id_10000006_seq_num_1pkt_per_1s.out
-- simultaneous_cal_nodes_seq_num_1pkt_per_1s.out
-
-### Hubble packet transmissions with older (TI) frequency step saved in old.tar.gz
-
-- tx_hubble_pkts_concat_24_26_30_32_36_38_42_44symbols.out
-- tx_hubble_pkts_24symbols_1pkt_per_sec.out
-- tx_two_tones_always_ON.out
-- tx_hubble_pkts_44symbols.out
-- tx_hubble_pkts_42symbols.out
-- tx_hubble_pkts_38symbols.out
-- tx_hubble_pkts_36symbols.out
-- tx_hubble_pkts_32symbols.out
-- tx_hubble_pkts_30symbols.out
-- tx_hubble_pkts_26symbols.out
-- tx_hubble_pkts_24symbols.out
-- tx_hubble_pkts_24symbols_rand_1.out
-- tx_hubble_pkts_24symbols_rand_2.out
-- tx_hubble_pkts_24symbols_rand_3.out
-- tx_hubble_pkts_8symbols.out
-- tx_hubble_pkts_8symbols_reverse.out
-- tx_hubble_two_pkts_200KHz_16dB_offset.out
-- tx_hubble_two_pkts_200KHz_offset.out
-- tx_two_tones_8msON_1.6msOFF.out
+The `source_files/` directory contains pre-generated TX waveforms (`.out` files
+produced by Matlab). These are used by the legacy TX API and are not required
+for the streaming decoder.
