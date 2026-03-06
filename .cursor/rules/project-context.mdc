@@ -1,0 +1,96 @@
+---
+description: Project context, architecture decisions, known issues, and testing status for the multi-SDR streaming spectrogram + packet decoder
+alwaysApply: true
+---
+
+# Project Context
+
+Live rolling spectrogram and BLE-like packet decoder for SDR devices, served
+as a web dashboard on port 8050.
+
+## Architecture
+
+Single unified code path using GNU Radio's `gr-soapy` block (wraps SoapySDR).
+Adding a new SDR requires only a SoapySDR module -- zero application code changes.
+
+### Key files
+
+- `src/stream_web/gnuradio_rx.py` — GNU Radio flowgraph: `soapy.source` → custom `_BufferSink` → shared IQ circular buffer. Contains connection liveness monitoring and auto-exit on drop.
+- `src/stream_web/config.py` — All SDR/decoder/display constants. `ADC_FULL_SCALE = 1.0` because gr-soapy normalises all samples to CF32 ±1.0.
+- `src/stream_web/app.py` — Flask app, thread orchestration, `SharedState` object.
+- `src/stream_web/decoder.py` — Dual-protocol preamble detection + packet decode.
+- `src/stream_web/processor.py` — Processing loop (spectrogram + decode + render).
+
+### Thread model
+
+| Thread | What |
+|--------|------|
+| GNU Radio C++ threads | `soapy.source` USB/network transfer → `_BufferSink.work()` writes into circular buffer |
+| Processor (Python) | Every 0.5s: compute spectrogram, render 10s image, decode packets |
+| Flask (main) | Web server on port 8050 |
+
+### SDR device strings (in `_soapy_driver_args()`)
+
+- PlutoSDR Ethernet: `driver=plutosdr,hostname=192.168.2.1`
+- PlutoSDR USB: `driver=plutosdr`
+- bladeRF: `driver=bladerf` (optional `,serial=...`)
+
+## Connection recovery
+
+When the SDR connection drops mid-stream, the process exits with code 3.
+libiio cannot recover in-process -- once EPIPE (-32) errors start, even a new
+`iio_context` in the same process inherits the broken pipe state. Docker's
+`--restart unless-stopped` policy auto-recovers in 5-10 seconds.
+
+Initial connection retries (SDR not yet plugged in) DO work in-process.
+
+## Docker
+
+- Image: `ghcr.io/hubblenetwork/pluto-sdr-docker:latest`
+- Base: Ubuntu 22.04 + GNU Radio from PPA
+- CRITICAL: GNU Radio PPA is compiled against NumPy 1.x. The Dockerfile pins `numpy>=1.26,<2`. If this constraint is removed, `gnuradio` will fail to import with `_ARRAY_API not found`.
+- `vmcircbuf` backend set to `shmem` in `/root/.gnuradio/prefs/` (required for GNU Radio in containers).
+- Run with: `docker run --restart unless-stopped -d -p 8050:8050 -e PLUTO_URI=ip:192.168.2.1 pluto_container`
+
+## Known issues and platform notes
+
+### libiio EPIPE on connection loss
+Error `-32` / `WRITE ALL: -32` floods stderr when the PlutoSDR network connection drops. Cannot be suppressed from Python (comes from libiio C library). Handled by auto-exit + Docker restart.
+
+### bladeRF streaming instability on macOS / Apple Silicon
+The bladeRF 2.0 has a known USB streaming bug on ARM platforms (Apple Silicon, RPi5): `NIOS II response: Operation timed out` and `bladerf_sync_rx() returned -1`. This is a low-level `libbladeRF` issue (GitHub #977), not solvable at the application level. **x86 Linux is the reliable platform for bladeRF.**
+
+### bladeRF firmware requirements
+FPGA v0.16.0 requires firmware >= 2.6.0. Load FPGA with `bladeRF-cli -l /tmp/hostedxA4.rbf`. Flash to auto-load with `-L`.
+
+### macOS SoapyPlutoSDR rpath issue
+After building SoapyPlutoSDR from source on macOS, `libPlutoSDRSupport.so` links against a nonexistent framework path. Fix with:
+```
+install_name_tool -change "@rpath/iio.framework/Versions/0.25/iio" "@rpath/libiio.0.dylib" /opt/homebrew/lib/SoapySDR/modules0.8/libPlutoSDRSupport.so
+install_name_tool -add_rpath /opt/homebrew/lib /opt/homebrew/lib/SoapySDR/modules0.8/libPlutoSDRSupport.so
+```
+
+### SoapySDR duplicate module warning
+Harmless `[ERROR] duplicate entry for bladerf` in Docker logs. Both `/usr/local/lib/SoapySDR/modules0.8/` and `/usr/lib/.../SoapySDR/modules0.8/` contain the bladeRF module. Does not affect functionality.
+
+## Testing status
+
+### PlutoSDR (ADALM-PLUTO)
+- macOS native (Apple Silicon): PASSED — stable streaming, packet decode working, ~19% decode rate
+- Docker on macOS (Ethernet to Pluto): PASSED — 30+ minute soak test, 1500+ detections, zero connection drops, auto-restart logic verified
+- Linux Docker: not yet tested (should work, same image)
+
+### bladeRF 2.0 Micro A4
+- macOS native (Apple Silicon): FAILED — USB streaming instability (known ARM bug, GitHub #977). NIOS II timeouts after a few successful reads. GNU Radio's C++ threading did not help.
+- Docker on macOS: not tested (USB passthrough doesn't work on Docker Desktop for Mac)
+- **x86 Linux: NOT YET TESTED** — this is the primary next step
+
+## Next steps (x86 Linux machine)
+
+1. **Test bladeRF in Docker on x86 Linux** — this is the key validation. The ARM USB bug should not affect x86.
+   ```
+   docker run --restart unless-stopped -d -p 8050:8050 --privileged -e SDR_TYPE=bladerf pluto_container
+   ```
+2. **Test PlutoSDR in Docker on x86 Linux** — should work out of the box (Ethernet or USB).
+3. **Long soak test** — monitor for 30+ minutes with `curl -s http://localhost:8050/api/status` to confirm stability.
+4. Verify the `rx_peak_pct` metric is reporting correctly for bladeRF (gain range is 0-60 dB vs PlutoSDR's 0-71 dB).
