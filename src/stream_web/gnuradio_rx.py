@@ -50,7 +50,11 @@ def _soapy_driver_args() -> str:
     # PlutoSDR (default)
     uri = config.PLUTO_URI
     if uri.startswith("ip:"):
-        return f"driver=plutosdr,hostname={uri[3:]}"
+        # Use uri= (not hostname=) so libiio calls iio_create_context_from_uri
+        # instead of iio_create_network_context, which fails when the client
+        # libiio (e.g. 0.23) is older than the firmware (e.g. 0.26).
+        return f"driver=plutosdr,uri={uri}"
+    # USB or bare: let SoapyPlutoSDR auto-discover via iio_create_default_context
     return "driver=plutosdr"
 
 

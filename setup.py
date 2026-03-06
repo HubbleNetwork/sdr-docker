@@ -28,7 +28,7 @@ setup(
     },
     install_requires=[
         "flask",
-        "numpy>=1.26",
+        "numpy>=1.26,<2",
         "scipy>=1.13",
         "reedsolo",
         "matplotlib",
@@ -45,23 +45,32 @@ setup(
     # REQUIRED:
     #   gnuradio >= 3.9    GNU Radio with gr-soapy (the unified SDR backend)
     #                      • macOS:  brew install gnuradio
-    #                      • Linux:  apt install gnuradio (from gnuradio PPA)
+    #                      • Linux:  apt install gnuradio
     #
     #   soapysdr           SoapySDR abstraction library
     #                      • macOS:  installed as a gnuradio dependency
     #                      • Linux:  apt install libsoapysdr-dev python3-soapysdr
+    #
+    # BUILD TOOLS (needed to compile SoapySDR device modules):
+    #   cmake, g++         • Linux: apt install cmake g++
+    #                      • macOS: brew install cmake (g++ via Xcode CLT)
     #
     # PER-SDR (install the one(s) you need):
     #   SoapyPlutoSDR      PlutoSDR support (requires libiio)
     #                      • Build from source: github.com/pothosware/SoapyPlutoSDR
     #                      • macOS: libiio must also be built from source (not in
     #                        Homebrew); see README for full instructions
-    #                      • Linux: apt install libiio-dev, then build SoapyPlutoSDR
+    #                      • Linux: apt install libiio-dev libiio-utils,
+    #                        then build SoapyPlutoSDR
     #
     #   SoapyBladeRF       bladeRF 2.0 Micro A4 support (requires libbladerf)
     #                      • Build from source: github.com/pothosware/SoapyBladeRF
     #                      • macOS: brew install libbladerf, then build SoapyBladeRF
     #                      • Linux: apt install libbladerf-dev, then build SoapyBladeRF
+    #
+    # NUMPY CONSTRAINT: numpy must be < 2.0 because the GNU Radio packages
+    # (both apt and Homebrew) are compiled against NumPy 1.x ABI. NumPy 2.x
+    # will cause `gnuradio` imports to fail with `_ARRAY_API not found`.
     #
     # See README.md for detailed step-by-step installation instructions.
 )
