@@ -9,7 +9,7 @@ RUN echo 'Acquire::http::Pipeline-Depth "0";' > /etc/apt/apt.conf.d/99fixmirror 
 RUN rm -rf /var/lib/apt/lists/* && \
     apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y \
-        software-properties-common wget python3-pip && \
+        software-properties-common wget python3-pip git cmake && \
     rm -rf /var/lib/apt/lists/*
 
 # Add the GNU Radio PPA repository and install GNU Radio
@@ -17,7 +17,7 @@ RUN add-apt-repository -y ppa:gnuradio/gnuradio-releases && \
     apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --fix-missing gnuradio gnuradio-dev
 
-# Download and install libiio
+# Download and install libiio (PlutoSDR support)
 RUN ARCH=$(dpkg --print-architecture) && \
     if [ "$ARCH" = "arm64" ] || [ "$ARCH" = "aarch64" ]; then \
         DEB="libiio-0.26.g-Ubuntu-arm64v8.deb"; \
@@ -27,6 +27,27 @@ RUN ARCH=$(dpkg --print-architecture) && \
     wget "https://github.com/analogdevicesinc/libiio/releases/download/v0.26/$DEB" && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y "./$DEB" && \
     rm "$DEB"
+
+# Install SoapySDR + bladeRF + PlutoSDR SoapySDR modules
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y \
+        libsoapysdr-dev python3-soapysdr soapysdr-tools \
+        libbladerf-dev libbladerf2 bladerf && \
+    rm -rf /var/lib/apt/lists/*
+
+# Build SoapyPlutoSDR module from source (PlutoSDR via gr-soapy)
+RUN git clone --depth 1 https://github.com/pothosware/SoapyPlutoSDR.git /tmp/SoapyPlutoSDR && \
+    cd /tmp/SoapyPlutoSDR && mkdir build && cd build && \
+    cmake .. && make -j"$(nproc)" && make install && \
+    rm -rf /tmp/SoapyPlutoSDR && \
+    ldconfig
+
+# Build SoapyBladeRF module from source (bladeRF via gr-soapy)
+RUN git clone --depth 1 https://github.com/pothosware/SoapyBladeRF.git /tmp/SoapyBladeRF && \
+    cd /tmp/SoapyBladeRF && mkdir build && cd build && \
+    cmake .. && make -j"$(nproc)" && make install && \
+    rm -rf /tmp/SoapyBladeRF && \
+    ldconfig
 
 # Without these lines the GNU Radio vmcircbuf backend fails to initialise
 RUN mkdir -p /root/.gnuradio/prefs && \
@@ -41,8 +62,12 @@ COPY run_stream.py /app/
 COPY src/ /app/src/
 
 # Install the python package
+# GNU Radio from the Ubuntu PPA is compiled against NumPy 1.x;
+# pip must not upgrade numpy beyond 1.x or gnuradio will fail to import.
+# --ignore-installed is needed because some system distutils packages
+# (blinker, etc.) can't be pip-uninstalled cleanly.
 RUN python3 -m pip install --upgrade pip setuptools wheel
-RUN python3 -m pip install --ignore-installed -e .
+RUN python3 -m pip install --ignore-installed -e . "numpy>=1.26,<2"
 
 # Start the live spectrogram + decoder web server
 EXPOSE 8050

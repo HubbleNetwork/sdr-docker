@@ -4,11 +4,25 @@ services:
     container_name: pluto_container
     working_dir: /app
 
+    environment:
+      - SDR_TYPE=${SDR_TYPE:-pluto}
+      - PLUTO_URI=${PLUTO_URI:-ip:192.168.2.1}
+
     volumes:
       - ./:/app
 
     ports:
       - "8050:8050"
+
+    # ── USB device passthrough (Linux only) ────────────────────────
+    # Uncomment ONE of the options below when connecting an SDR via USB.
+    #
+    # Option A – full USB bus (simple, works for any device):
+    #   privileged: true
+    #
+    # Option B – specific device (tighter security):
+    #   devices:
+    #     - /dev/bus/usb:/dev/bus/usb
 
     stdin_open: true
     tty: true
