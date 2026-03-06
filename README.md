@@ -1,33 +1,45 @@
 # pluto-sdr-docker
 
-Docker container for the PlutoSDR that streams IQ data, displays a live rolling
-spectrogram, and decodes packets in real time. Results are served as a web
+Live rolling spectrogram and packet decoder for SDR devices.  Streams IQ data,
+displays a real-time spectrogram, and decodes packets — all served as a web
 dashboard on port **8050**.
+
+## Supported SDR devices
+
+| Device | Interface | Notes |
+|--------|-----------|-------|
+| **ADALM-PLUTO (PlutoSDR)** | Ethernet (`ip:192.168.2.1`) or USB | Default. USB on Mac requires NCM firmware (see below) |
+| **Nuand bladeRF 2.0 Micro A4** | USB | Set `SDR_TYPE=bladerf` |
+
+All SDR hardware is accessed through a **single code path**: GNU Radio's
+`gr-soapy` block, which wraps SoapySDR.  Adding support for a new device
+(RTL-SDR, HackRF, LimeSDR, USRP, …) requires only a SoapySDR module for
+that device — zero application code changes.
 
 ## Architecture
 
-| Component      | Thread     | Description                                                        |
-|----------------|------------|--------------------------------------------------------------------|
-| **PlutoSDR RX** | background | Reads IQ samples into a 2 s circular buffer                       |
-| **Processor**   | background | Every 0.5 s: compute spectrogram chunk, render 10 s image, decode  |
-| **Flask server** | main      | Serves web page with live spectrogram + decoded device table       |
+| Component | Thread | Description |
+|-----------|--------|-------------|
+| **SDR RX** | GNU Radio flowgraph (C++ threads) | `soapy.source` → custom sink that writes into a 2 s circular buffer |
+| **Processor** | background Python thread | Every 0.5 s: compute spectrogram chunk, render 10 s image, decode |
+| **Flask server** | main | Serves web page with live spectrogram + decoded device table |
 
 ### Data flow
 
 ```
-PlutoSDR  ──RX──>  IQ circular buffer (2 s)
-                        │
-                        ├──> 0.5 s chunk ──> vis spectrogram (NFFT=4096)
-                        │                        │
-                        │                   deque of 20 chunks ──> JPEG image
-                        │
-                        └──> 1.0 s chunk ──> detection spectrogram (NFFT=625)
-                                                 │
-                                            template matching + NMS
-                                                 │
-                                            FSK demodulation + RS decode
-                                                 │
-                                            decoded device IDs + seq nums
+SDR  ──gr-soapy──>  BufferSink ──>  IQ circular buffer (2 s)
+                                          │
+                                          ├──> 0.5 s chunk ──> vis spectrogram (NFFT=4096)
+                                          │                        │
+                                          │                   deque of 20 chunks ──> JPEG image
+                                          │
+                                          └──> 1.0 s chunk ──> detection spectrogram (NFFT=625)
+                                                                   │
+                                                              template matching + NMS
+                                                                   │
+                                                              FSK demodulation + RS decode
+                                                                   │
+                                                              decoded device IDs + seq nums
 ```
 
 ### Project structure
@@ -35,9 +47,10 @@ PlutoSDR  ──RX──>  IQ circular buffer (2 s)
 ```
 src/stream_web/
 ├── config.py          # All SDR / decoder / display constants
+├── gnuradio_rx.py     # GNU Radio flowgraph: soapy.source → BufferSink
+├── sdr.py             # Re-exports rx_loop (backward compat)
 ├── decoder.py         # Dual-protocol preamble detection + packet decode
 ├── spectrogram.py     # Spectrogram computation and image rendering
-├── sdr.py             # PlutoSDR RX thread (pyadi-iio)
 ├── processor.py       # Processing loop (spec + decode + render)
 ├── app.py             # Flask app, routes, thread orchestration
 ├── templates/
@@ -46,9 +59,53 @@ src/stream_web/
     └── style.css      # Dashboard CSS
 ```
 
-## Setup
+## Dependencies
 
-### Install Docker
+The application has two layers of dependencies:
+
+| Layer | What | How to install |
+|-------|------|----------------|
+| **Python packages** (pip) | flask, numpy, scipy, reedsolo, matplotlib, opencv-python-headless, Pillow | `pip install -e .` |
+| **System libraries** (apt / brew / source) | GNU Radio >= 3.9, SoapySDR, per-device SoapySDR modules, device libraries | See platform-specific sections below |
+
+GNU Radio and SoapySDR ship Python bindings that are installed system-wide
+(not via pip).  To make them visible inside a virtualenv, always create the
+venv with `--system-site-packages`:
+
+```shell
+python3 -m venv --system-site-packages .venv
+```
+
+The **Dockerfile** serves as the canonical reference for all system-level
+dependencies and their build steps.
+
+### Per-SDR system dependencies
+
+| SDR | Device library | SoapySDR module | Notes |
+|-----|---------------|-----------------|-------|
+| PlutoSDR | libiio >= 0.26 | [SoapyPlutoSDR](https://github.com/pothosware/SoapyPlutoSDR) (build from source) | libiio is `apt install` on Linux; must build from source on macOS |
+| bladeRF 2.0 | libbladerf | [SoapyBladeRF](https://github.com/pothosware/SoapyBladeRF) (build from source) | bladeRF firmware >= 2.6.0 required for FPGA v0.16.0 |
+
+---
+
+## Quick start
+
+### Environment variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SDR_TYPE` | `pluto` | SDR backend: `pluto` or `bladerf` |
+| `PLUTO_URI` | `ip:192.168.2.1` | PlutoSDR connection URI (e.g. `ip:192.168.2.1` or `usb:`) |
+| `BLADERF_SERIAL` | *(empty)* | Optional bladeRF serial number for multi-device setups |
+
+---
+
+## Setup — Docker on Linux
+
+Docker is the recommended way to run on Linux.  It works for **both SDR
+devices**, over **Ethernet or USB**.
+
+### 1. Install Docker
 
 Official instructions: <https://docs.docker.com/engine/install/>
 
@@ -57,12 +114,6 @@ Quick install with the convenience script:
 ```shell
 curl -fsSL https://get.docker.com -o get-docker.sh
 sudo sh ./get-docker.sh
-```
-
-### Add user to docker group
-
-```shell
-sudo groupadd docker
 sudo usermod -aG docker $USER
 ```
 
@@ -72,7 +123,7 @@ Log out and back in, then verify:
 groups | grep docker
 ```
 
-### Clone and build
+### 2. Clone and build
 
 ```shell
 git clone <repo-url>
@@ -84,48 +135,283 @@ docker build -t pluto_container .
 > [libiio releases](https://github.com/analogdevicesinc/libiio/releases/tag/v0.26)
 > and update the `wget` line in the [Dockerfile](./Dockerfile).
 
-## Run
+### 3. Run
 
-### Background
+#### PlutoSDR over Ethernet (default)
 
-```shell
-docker run -d -p 8050:8050 pluto_container
-```
-
-### Interactive
+No special flags needed — the container reaches Pluto at `192.168.2.1` via the
+host network stack:
 
 ```shell
 docker run -it -p 8050:8050 pluto_container
 ```
 
-Then open <http://localhost:8050> in a browser.
+To use a different Pluto IP:
 
-### With Docker Compose (development)
+```shell
+docker run -it -p 8050:8050 -e PLUTO_URI=ip:192.168.3.1 pluto_container
+```
+
+#### PlutoSDR over USB
+
+Pass the USB bus into the container:
+
+```shell
+docker run -it -p 8050:8050 \
+  --privileged \
+  -e PLUTO_URI=usb: \
+  pluto_container
+```
+
+Or, for tighter security, map only `/dev/bus/usb`:
+
+```shell
+docker run -it -p 8050:8050 \
+  --device=/dev/bus/usb \
+  -e PLUTO_URI=usb: \
+  pluto_container
+```
+
+#### bladeRF Micro A4 (USB)
+
+```shell
+docker run -it -p 8050:8050 \
+  --privileged \
+  -e SDR_TYPE=bladerf \
+  pluto_container
+```
+
+### 4. Docker Compose (development)
 
 ```shell
 docker build -t pluto_container .
+
+# PlutoSDR over Ethernet (default):
 docker compose up
+
+# PlutoSDR over USB:
+SDR_TYPE=pluto PLUTO_URI=usb: docker compose up
+
+# bladeRF:
+SDR_TYPE=bladerf docker compose up
 ```
 
-The compose file mounts the local repo into the container so code changes take
-effect on restart (`docker compose restart`).
+> **USB passthrough with Compose:** uncomment the `privileged: true` or
+> `devices:` section in [`compose.yml`](./compose.yml).
 
-## Stop
+### 5. Open the dashboard
+
+Navigate to <http://localhost:8050> in a browser.
+
+### 6. Stop
 
 ```shell
 docker ps
 docker kill <container_id>
 ```
 
+---
+
+## Setup — Native on macOS
+
+Docker Desktop for Mac runs Linux inside a VM, which makes USB device
+passthrough unreliable.  **Running natively is recommended on macOS** for both
+PlutoSDR (USB) and bladeRF.
+
+### Prerequisites
+
+Install GNU Radio and base SDR support via Homebrew:
+
+```shell
+brew install gnuradio libusb cmake
+```
+
+This installs GNU Radio 3.10+ with gr-soapy (the unified SDR backend) and
+SoapySDR.  Both are linked to the Homebrew Python (currently 3.14).
+
+**For PlutoSDR**, build libiio and SoapyPlutoSDR from source (neither is
+available as a Homebrew formula):
+
+```shell
+# 1. Build libiio from source
+git clone --depth 1 --branch v0.26 https://github.com/analogdevicesinc/libiio.git
+cd libiio && mkdir build && cd build
+cmake .. -DCMAKE_INSTALL_PREFIX=/opt/homebrew \
+         -DWITH_TESTS=OFF -DOSX_PACKAGE=OFF -DOSX_FRAMEWORK=OFF
+make -j$(sysctl -n hw.ncpu) && make install
+cd ../..
+
+# 2. Build SoapyPlutoSDR module
+git clone --depth 1 https://github.com/pothosware/SoapyPlutoSDR.git
+cd SoapyPlutoSDR && mkdir build && cd build
+cmake .. -DCMAKE_INSTALL_PREFIX=/opt/homebrew
+make -j$(sysctl -n hw.ncpu) && make install
+cd ../..
+
+# 3. Fix dynamic library paths (macOS rpath issue)
+install_name_tool -change \
+  "@rpath/iio.framework/Versions/0.25/iio" \
+  "@rpath/libiio.0.dylib" \
+  /opt/homebrew/lib/SoapySDR/modules0.8/libPlutoSDRSupport.so
+install_name_tool -add_rpath /opt/homebrew/lib \
+  /opt/homebrew/lib/SoapySDR/modules0.8/libPlutoSDRSupport.so
+
+# 4. Clean up source trees
+rm -rf libiio SoapyPlutoSDR
+
+# Verify:
+SoapySDRUtil --find="driver=plutosdr"
+```
+
+> **Why not `sudo make install`?** On Apple Silicon Macs, `/opt/homebrew` is
+> owned by the user, so `sudo` is not needed.  If you see permission errors,
+> prefix the `make install` commands with `sudo`.
+
+**For bladeRF Micro A4**, install libbladerf and build SoapyBladeRF:
+
+```shell
+brew install libbladerf
+
+# Build SoapyBladeRF module
+git clone --depth 1 https://github.com/pothosware/SoapyBladeRF.git
+cd SoapyBladeRF && mkdir build && cd build
+cmake .. -DCMAKE_INSTALL_PREFIX=/opt/homebrew
+make -j$(sysctl -n hw.ncpu) && make install
+cd ../.. && rm -rf SoapyBladeRF
+
+# Verify:
+SoapySDRUtil --find="driver=bladerf"
+```
+
+**Verifying all modules loaded:**
+
+```shell
+SoapySDRUtil --info
+# Should list "Available factories... bladerf, plutosdr, rtlsdr"
+# If a module shows "dlopen() failed", check the error for missing libraries.
+```
+
+### Install Python dependencies
+
+Use a venv with `--system-site-packages` so the Homebrew-installed GNU Radio
+and SoapySDR Python bindings are visible inside the venv:
+
+```shell
+cd pluto-sdr-docker/
+python3 -m venv --system-site-packages .venv
+source .venv/bin/activate
+pip install -e .
+```
+
+> **Why `--system-site-packages`?** GNU Radio's Python bindings are installed
+> system-wide by Homebrew (into Python 3.14's `site-packages`).  A standard
+> venv isolates from system packages and would not see them.  The
+> `--system-site-packages` flag allows the venv to fall through to the system
+> packages for anything not installed locally.
+
+### Run
+
+**PlutoSDR over USB:**
+
+```shell
+PLUTO_URI=usb: python3 run_stream.py
+```
+
+**PlutoSDR over Ethernet** (requires NCM firmware — see troubleshooting below):
+
+```shell
+python3 run_stream.py
+```
+
+**bladeRF Micro A4:**
+
+```shell
+SDR_TYPE=bladerf python3 run_stream.py
+```
+
+Open <http://localhost:8050>.
+
+---
+
+## Setup — Native on Linux
+
+Running natively (without Docker) on Linux follows the same pattern.
+
+### Prerequisites
+
+```shell
+sudo apt update
+sudo apt install -y python3-pip python3-venv git cmake
+
+# GNU Radio (with gr-soapy built in) from the official PPA
+sudo add-apt-repository -y ppa:gnuradio/gnuradio-releases
+sudo apt update
+sudo apt install -y gnuradio
+
+# SoapySDR runtime and development files
+sudo apt install -y libsoapysdr-dev python3-soapysdr soapysdr-tools
+```
+
+**PlutoSDR support** (libiio is available as a system package on Linux):
+
+```shell
+sudo apt install -y libiio-dev
+
+git clone --depth 1 https://github.com/pothosware/SoapyPlutoSDR.git
+cd SoapyPlutoSDR && mkdir build && cd build
+cmake .. && make -j$(nproc) && sudo make install
+cd ../.. && rm -rf SoapyPlutoSDR
+sudo ldconfig
+```
+
+**bladeRF support** (optional):
+
+```shell
+sudo apt install -y libbladerf-dev libbladerf2 bladerf
+
+git clone --depth 1 https://github.com/pothosware/SoapyBladeRF.git
+cd SoapyBladeRF && mkdir build && cd build
+cmake .. && make -j$(nproc) && sudo make install
+cd ../.. && rm -rf SoapyBladeRF
+sudo ldconfig
+```
+
+Verify with `SoapySDRUtil --info` — you should see `plutosdr` and/or
+`bladerf` listed under "Available factories".
+
+### Install and run
+
+```shell
+cd pluto-sdr-docker/
+
+# --system-site-packages is required so the venv can see
+# GNU Radio and SoapySDR Python bindings installed by apt
+python3 -m venv --system-site-packages .venv
+source .venv/bin/activate
+pip install -e .
+
+# PlutoSDR (Ethernet, default):
+python3 run_stream.py
+
+# PlutoSDR (USB):
+PLUTO_URI=usb: python3 run_stream.py
+
+# bladeRF Micro A4:
+SDR_TYPE=bladerf python3 run_stream.py
+```
+
+---
+
 ## Configuration
 
-All tuneable parameters live in [`src/stream_web/config.py`](src/stream_web/config.py).
-Key settings:
+All tuneable parameters live in
+[`src/stream_web/config.py`](src/stream_web/config.py).  Key settings:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `PLUTO_URI` | `ip:192.168.2.1` | PlutoSDR network address |
-| `PLUTO_FREQ_HZ` | 2.482754875 GHz | Centre frequency |
+| `SDR_TYPE` | `pluto` | SDR backend (`pluto` or `bladerf`) |
+| `PLUTO_URI` | `ip:192.168.2.1` | PlutoSDR connection URI |
+| `CENTER_FREQ_HZ` | 2.482754875 GHz | Centre frequency |
 | `SAMPLE_RATE` | 781 250 Hz | ADC sample rate |
 | `RX_INITIAL_GAIN_DB` | 40 | Initial RX gain (adjustable from the UI) |
 | `FLASK_PORT` | 8050 | Web server port |
@@ -144,3 +430,138 @@ The dashboard auto-refreshes every 500 ms and provides:
 - **Gain control** — adjust RX gain from the browser.
 - **Time-domain viewer** — enter a device ID to see a per-symbol magnitude plot.
 
+---
+
+## Troubleshooting
+
+### PlutoSDR USB on macOS — NCM firmware
+
+The PlutoSDR ships with RNDIS-mode USB networking, which macOS does not support
+natively.  There are two options:
+
+**Option A — Switch Pluto to NCM mode (recommended for Ethernet-over-USB):**
+
+1. Plug in the PlutoSDR.  It appears as a USB mass-storage drive (`PlutoSDR`).
+2. Open `config.txt` on the drive and change:
+   ```
+   usb_ethernet_mode = ncm
+   ```
+3. Eject the drive and power-cycle the Pluto.
+4. After reboot, a new network interface should appear and the Pluto will be
+   reachable at `192.168.2.1`.
+
+> You may also need to update the PlutoSDR firmware to a version that supports
+> NCM.  See the
+> [ADI firmware update guide](https://wiki.analog.com/university/tools/pluto/users/firmware).
+
+**Option B — Use the IIO USB backend (no network needed):**
+
+Run with `PLUTO_URI=usb:` — libiio communicates over raw USB, bypassing
+Ethernet entirely.  This is the simplest option on macOS:
+
+```shell
+PLUTO_URI=usb: python3 run_stream.py
+```
+
+### bladeRF not detected
+
+```shell
+# Check that libbladeRF sees the device:
+bladeRF-cli -p
+
+# Check that SoapySDR sees the device:
+SoapySDRUtil --find="driver=bladerf"
+
+# If SoapySDRUtil shows nothing, verify the SoapyBladeRF module is installed:
+SoapySDRUtil --info
+# Look for "bladerf" in the list of available modules.
+```
+
+### bladeRF FPGA not loaded
+
+The bladeRF 2.0 requires an FPGA bitstream loaded at each power-on.  If
+streaming fails with NIOS II errors, load the FPGA manually:
+
+```shell
+# Download the A4 FPGA image (once):
+wget https://www.nuand.com/fpga/hostedxA4-latest.rbf -O /tmp/hostedxA4.rbf
+
+# Load it:
+bladeRF-cli -l /tmp/hostedxA4.rbf
+```
+
+To have it load automatically, write the FPGA image to flash (capital `-L`):
+
+```shell
+bladeRF-cli -L /tmp/hostedxA4.rbf
+```
+
+### bladeRF firmware version
+
+FPGA v0.16.0 requires firmware **>= 2.6.0**.  If you see errors like
+`FPGA v0.16.0 requires firmware v2.6.0+`, update the firmware:
+
+```shell
+# Download latest firmware:
+wget https://www.nuand.com/fx3/bladeRF_fw_latest.img -O /tmp/bladeRF_fw.img
+
+# Flash it:
+bladeRF-cli -f /tmp/bladeRF_fw.img
+
+# IMPORTANT: power-cycle the bladeRF (unplug & re-plug) after flashing.
+# Then reload the FPGA:
+bladeRF-cli -l /tmp/hostedxA4.rbf
+```
+
+Check versions with `bladeRF-cli -e version`.
+
+### bladeRF streaming instability on macOS / Apple Silicon
+
+The bladeRF 2.0 has a [known issue](https://github.com/Nuand/bladeRF/issues/977)
+with USB streaming stability on ARM-based platforms (Raspberry Pi 5, Apple
+Silicon Macs).  Symptoms include `NIOS II response: Operation timed out` and
+`bladerf_sync_rx() returned -1` errors, sometimes after only a few successful
+reads.
+
+**Mitigations:**
+
+- **Use GNU Radio** (this project's default) rather than raw SoapySDR calls.
+  GNU Radio's C++ streaming threads keep the USB transfer loop tight and
+  unblocked, which significantly improves stability.
+- **Connect directly** to the Mac — avoid USB hubs.
+- **Power-cycle** the bladeRF if it gets into a bad state (streaming errors
+  persist until the device is fully unplugged and reconnected).
+- For reliable bladeRF operation, **Linux x86** is recommended.
+
+### Docker USB passthrough on macOS
+
+Docker Desktop for Mac runs Linux inside a lightweight VM.  USB devices on the
+Mac host are **not** visible inside this VM, so `--privileged` and `--device`
+flags do not help.
+
+**Workaround options:**
+
+1. **Run natively** (recommended) — see the macOS setup section above.
+2. Use [OrbStack](https://orbstack.dev/) instead of Docker Desktop — it has
+   experimental USB passthrough support.
+3. For PlutoSDR only: use Ethernet mode (`ip:192.168.2.1`) which works fine
+   through Docker on Mac, but requires the NCM firmware change described above.
+
+### USB permissions on Linux
+
+If the SDR is not detected as a non-root user, add a udev rule:
+
+```shell
+# PlutoSDR
+echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="0456", ATTR{idProduct}=="b673", MODE="0666"' \
+  | sudo tee /etc/udev/rules.d/53-plutosdr.rules
+
+# bladeRF
+echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="2cf0", MODE="0666"' \
+  | sudo tee /etc/udev/rules.d/53-bladerf.rules
+
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+```
+
+Unplug and re-plug the device.

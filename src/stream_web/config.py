@@ -1,20 +1,34 @@
-"""Configuration constants and derived parameters for the PlutoSDR stream decoder."""
+"""Configuration constants and derived parameters for the SDR stream decoder."""
+
+import os
 
 import numpy as np
 import reedsolo as rs
 
-# -- PlutoSDR ---------------------------------------------------------------
-PLUTO_URI = "ip:192.168.2.1"
-PLUTO_FREQ_HZ = int(2.482754875e9)
+# -- SDR selection (override with environment variables) --------------------
+SDR_TYPE = os.environ.get("SDR_TYPE", "pluto").lower()  # "pluto" | "bladerf"
+
+# -- PlutoSDR connection (ignored when SDR_TYPE != "pluto") -----------------
+PLUTO_URI = os.environ.get("PLUTO_URI", "ip:192.168.2.1")
+
+# -- Radio parameters (shared across SDR backends) -------------------------
+CENTER_FREQ_HZ = int(2.482754875e9)
 SAMPLE_RATE = 781_250  # 6.25 MHz / 8
 RX_BUFFER_SIZE = 2 ** 16  # ~84 ms per read
 RF_BANDWIDTH = int(SAMPLE_RATE)
 RX_GAIN_MODE = "manual"
 RX_INITIAL_GAIN_DB = 40
 RX_GAIN_MIN_DB = 0
-RX_GAIN_MAX_DB = 71  # AD9361 max at >1.3 GHz
 RX_GAIN_STEP_DB = 2
-ADC_FULL_SCALE = 2 ** 11  # AD9361 12-bit ADC: +/-2048
+
+# -- Per-SDR hardware parameters -------------------------------------------
+# gr-soapy always outputs CF32 normalised to ±1.0 regardless of backend
+ADC_FULL_SCALE = 1.0
+
+if SDR_TYPE == "bladerf":
+    RX_GAIN_MAX_DB = 60    # bladeRF 2.0 Micro A4 overall-gain range
+else:  # pluto (default)
+    RX_GAIN_MAX_DB = 71    # AD9361 max at >1.3 GHz
 
 # -- Spectrogram (visualisation) -------------------------------------------
 NFFT_VIS = 2 ** 12  # 4096
