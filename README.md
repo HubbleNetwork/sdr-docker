@@ -143,13 +143,14 @@ No special flags needed — the container reaches Pluto at `192.168.2.1` via the
 host network stack:
 
 ```shell
-docker run -it -p 8050:8050 pluto_container
+docker run --restart unless-stopped -d -p 8050:8050 pluto_container
 ```
 
 To use a different Pluto IP:
 
 ```shell
-docker run -it -p 8050:8050 -e PLUTO_URI=ip:192.168.3.1 pluto_container
+docker run --restart unless-stopped -d -p 8050:8050 \
+  -e PLUTO_URI=ip:192.168.3.1 pluto_container
 ```
 
 #### PlutoSDR over USB
@@ -157,7 +158,7 @@ docker run -it -p 8050:8050 -e PLUTO_URI=ip:192.168.3.1 pluto_container
 Pass the USB bus into the container:
 
 ```shell
-docker run -it -p 8050:8050 \
+docker run --restart unless-stopped -d -p 8050:8050 \
   --privileged \
   -e PLUTO_URI=usb: \
   pluto_container
@@ -166,7 +167,7 @@ docker run -it -p 8050:8050 \
 Or, for tighter security, map only `/dev/bus/usb`:
 
 ```shell
-docker run -it -p 8050:8050 \
+docker run --restart unless-stopped -d -p 8050:8050 \
   --device=/dev/bus/usb \
   -e PLUTO_URI=usb: \
   pluto_container
@@ -175,11 +176,14 @@ docker run -it -p 8050:8050 \
 #### bladeRF Micro A4 (USB)
 
 ```shell
-docker run -it -p 8050:8050 \
+docker run --restart unless-stopped -d -p 8050:8050 \
   --privileged \
   -e SDR_TYPE=bladerf \
   pluto_container
 ```
+
+> **Why `--restart unless-stopped`?**  See
+> [Connection recovery](#connection-recovery-auto-restart) below.
 
 ### 4. Docker Compose (development)
 
@@ -429,6 +433,41 @@ The dashboard auto-refreshes every 500 ms and provides:
 - **Statistics tab** — per-chipset decode success rates.
 - **Gain control** — adjust RX gain from the browser.
 - **Time-domain viewer** — enter a device ID to see a per-symbol magnitude plot.
+
+---
+
+## Connection recovery (auto-restart)
+
+The SDR RX thread monitors liveness by tracking the last time IQ samples
+arrived.  If no samples are received for **5 seconds**, the connection is
+considered lost.
+
+**Why the process exits instead of reconnecting in-process:**  PlutoSDR uses
+libiio for its network/USB backend.  Once a libiio pipe breaks (error `-32` /
+`EPIPE`), the library's internal state is corrupted and creating a new
+`iio_context` in the same process inherits the broken state.  In-process
+reconnection does not work — a fresh process is required.
+
+When a connection drop is detected, the process exits with **code 3**.
+Docker's `--restart unless-stopped` policy (or `on-failure`) automatically
+brings up a clean container, which establishes a fresh libiio context and
+reconnects.  A typical recovery cycle takes **5–10 seconds**.
+
+**Initial connection retries still work in-process** — if the SDR is not yet
+available at startup (e.g. device still booting), the code retries every few
+seconds until the device appears.  The exit-on-loss behaviour only applies
+after a successful streaming session drops.
+
+For native (non-Docker) usage, wrap the command in a process supervisor or a
+simple restart loop:
+
+```shell
+while true; do
+  python3 run_stream.py
+  echo "[supervisor] Process exited ($?), restarting in 5s..."
+  sleep 5
+done
+```
 
 ---
 
