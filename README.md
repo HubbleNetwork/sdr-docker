@@ -83,7 +83,7 @@ dependencies and their build steps.
 
 | SDR | Device library | SoapySDR module | Notes |
 |-----|---------------|-----------------|-------|
-| PlutoSDR | libiio >= 0.26 | [SoapyPlutoSDR](https://github.com/pothosware/SoapyPlutoSDR) (build from source) | libiio is `apt install` on Linux; must build from source on macOS |
+| PlutoSDR | libiio (>= 0.23 works) | [SoapyPlutoSDR](https://github.com/pothosware/SoapyPlutoSDR) (build from source) | libiio is `apt install` on Linux; must build from source on macOS |
 | bladeRF 2.0 | libbladerf | [SoapyBladeRF](https://github.com/pothosware/SoapyBladeRF) (build from source) | bladeRF firmware >= 2.6.0 required for FPGA v0.16.0 |
 
 ---
@@ -345,27 +345,35 @@ Running natively (without Docker) on Linux follows the same pattern.
 
 ```shell
 sudo apt update
-sudo apt install -y python3-pip python3-venv git cmake
+sudo apt install -y python3-pip python3-venv git
 
-# GNU Radio (with gr-soapy built in) from the official PPA
-sudo add-apt-repository -y ppa:gnuradio/gnuradio-releases
-sudo apt update
+# GNU Radio (with gr-soapy built in) — available in Ubuntu 22.04+ repos.
+# For older distros, add the PPA: sudo add-apt-repository -y ppa:gnuradio/gnuradio-releases
 sudo apt install -y gnuradio
 
 # SoapySDR runtime and development files
-sudo apt install -y libsoapysdr-dev python3-soapysdr soapysdr-tools
+sudo apt install -y libsoapysdr-dev python3-soapysdr
+
+# Build tools (needed to compile SoapySDR device modules from source)
+sudo apt install -y cmake g++
 ```
 
 **PlutoSDR support** (libiio is available as a system package on Linux):
 
 ```shell
-sudo apt install -y libiio-dev
+sudo apt install -y libiio-dev libiio-utils
 
 git clone --depth 1 https://github.com/pothosware/SoapyPlutoSDR.git
 cd SoapyPlutoSDR && mkdir build && cd build
 cmake .. && make -j$(nproc) && sudo make install
 cd ../.. && rm -rf SoapyPlutoSDR
 sudo ldconfig
+
+# Verify the PlutoSDR is reachable (should list Analog Devices PlutoSDR):
+iio_info -s
+
+# Verify SoapySDR sees the module:
+SoapySDRUtil --find="driver=plutosdr"
 ```
 
 **bladeRF support** (optional):
@@ -393,7 +401,22 @@ cd pluto-sdr-docker/
 python3 -m venv --system-site-packages .venv
 source .venv/bin/activate
 pip install -e .
+```
 
+> **NumPy constraint:** `setup.py` pins `numpy>=1.26,<2`.  The GNU Radio
+> packages from apt (and Homebrew) are compiled against the NumPy 1.x ABI.
+> If NumPy 2.x is installed, `import gnuradio` will fail with
+> `_ARRAY_API not found`.
+
+> **GNU Radio vmcircbuf warning:** on native Linux you may see
+> `vmcircbuf_prefs::get :error: …/vmcircbuf_default_factory: No such file`.
+> This is harmless (GNU Radio falls back automatically), but to silence it:
+> ```shell
+> mkdir -p ~/.gnuradio/prefs
+> echo "shm_open" > ~/.gnuradio/prefs/vmcircbuf_default_factory
+> ```
+
+```shell
 # PlutoSDR (Ethernet, default):
 python3 run_stream.py
 
@@ -585,6 +608,27 @@ flags do not help.
    experimental USB passthrough support.
 3. For PlutoSDR only: use Ethernet mode (`ip:192.168.2.1`) which works fine
    through Docker on Mac, but requires the NCM firmware change described above.
+
+### PlutoSDR "no device found in this context" on Linux
+
+If `SoapySDRUtil --find="driver=plutosdr"` detects the device but the app
+fails with `no device found in this context`, the likely cause is a **libiio
+version mismatch** between the host library (e.g. 0.23 from Ubuntu repos) and
+the PlutoSDR firmware (e.g. 0.26).
+
+This has already been fixed in the code — the app uses `iio_create_context_from_uri()`
+(via the SoapySDR `uri=` key) instead of `iio_create_network_context()` (the
+`hostname=` key), which tolerates version differences.
+
+If you still see this error, verify with:
+
+```shell
+# Should show the PlutoSDR and its firmware version:
+iio_info -s
+
+# Should return device details (not an error):
+iio_info -u ip:192.168.2.1
+```
 
 ### USB permissions on Linux
 

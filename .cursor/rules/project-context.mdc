@@ -31,8 +31,8 @@ Adding a new SDR requires only a SoapySDR module -- zero application code change
 
 ### SDR device strings (in `_soapy_driver_args()`)
 
-- PlutoSDR Ethernet: `driver=plutosdr,hostname=192.168.2.1`
-- PlutoSDR USB: `driver=plutosdr`
+- PlutoSDR Ethernet: `driver=plutosdr,uri=ip:192.168.2.1` (uses `uri=` not `hostname=` to avoid libiio version mismatch)
+- PlutoSDR USB: `driver=plutosdr` (auto-discover via `iio_create_default_context`)
 - bladeRF: `driver=bladerf` (optional `,serial=...`)
 
 ## Connection recovery
@@ -48,11 +48,14 @@ Initial connection retries (SDR not yet plugged in) DO work in-process.
 
 - Image: `ghcr.io/hubblenetwork/pluto-sdr-docker:latest`
 - Base: Ubuntu 22.04 + GNU Radio from PPA
-- CRITICAL: GNU Radio PPA is compiled against NumPy 1.x. The Dockerfile pins `numpy>=1.26,<2`. If this constraint is removed, `gnuradio` will fail to import with `_ARRAY_API not found`.
+- CRITICAL: GNU Radio packages (apt and Homebrew) are compiled against NumPy 1.x. Both setup.py and Dockerfile pin `numpy>=1.26,<2`. If this constraint is removed, `gnuradio` will fail to import with `_ARRAY_API not found`.
 - `vmcircbuf` backend set to `shmem` in `/root/.gnuradio/prefs/` (required for GNU Radio in containers).
 - Run with: `docker run --restart unless-stopped -d -p 8050:8050 -e PLUTO_URI=ip:192.168.2.1 pluto_container`
 
 ## Known issues and platform notes
+
+### libiio version mismatch (hostname= vs uri=)
+Ubuntu 22.04 ships libiio 0.23; PlutoSDR firmware may run 0.26. `iio_create_network_context()` (SoapySDR `hostname=` key) fails across this version gap with "no device found in this context". Fix: use `iio_create_context_from_uri()` (SoapySDR `uri=` key), which tolerates the mismatch. This is already fixed in `_soapy_driver_args()`.
 
 ### libiio EPIPE on connection loss
 Error `-32` / `WRITE ALL: -32` floods stderr when the PlutoSDR network connection drops. Cannot be suppressed from Python (comes from libiio C library). Handled by auto-exit + Docker restart.
@@ -78,6 +81,7 @@ Harmless `[ERROR] duplicate entry for bladerf` in Docker logs. Both `/usr/local/
 ### PlutoSDR (ADALM-PLUTO)
 - macOS native (Apple Silicon): PASSED — stable streaming, packet decode working, ~19% decode rate
 - Docker on macOS (Ethernet to Pluto): PASSED — 30+ minute soak test, 1500+ detections, zero connection drops, auto-restart logic verified
+- Linux native (x86, Ubuntu 22.04): PASSED — PlutoSDR Rev.C over Ethernet, gnuradio 3.10.1 from apt, libiio 0.23 (system) + SoapyPlutoSDR built from source. Required `uri=` fix (hostname= failed due to libiio 0.23 vs firmware 0.26 mismatch).
 - Linux Docker: not yet tested (should work, same image)
 
 ### bladeRF 2.0 Micro A4
