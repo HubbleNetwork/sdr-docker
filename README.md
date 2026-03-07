@@ -182,6 +182,9 @@ docker run --restart unless-stopped -d -p 8050:8050 \
   pluto_container
 ```
 
+> The container's entrypoint automatically loads the bladeRF FPGA bitstream
+> before starting the app — no manual `bladeRF-cli` step needed.
+
 > **Why `--restart unless-stopped`?**  See
 > [Connection recovery](#connection-recovery-auto-restart) below.
 
@@ -283,6 +286,10 @@ cmake .. -DCMAKE_INSTALL_PREFIX=/opt/homebrew
 make -j$(sysctl -n hw.ncpu) && make install
 cd ../.. && rm -rf SoapyBladeRF
 
+# Flash FPGA to auto-load (one-time — persists across power cycles)
+wget https://www.nuand.com/fpga/hostedxA4-latest.rbf -O /tmp/hostedxA4.rbf
+bladeRF-cli -L /tmp/hostedxA4.rbf
+
 # Verify:
 SoapySDRUtil --find="driver=bladerf"
 ```
@@ -368,11 +375,23 @@ cd SoapyPlutoSDR && mkdir build && cd build
 cmake .. && make -j$(nproc) && sudo make install
 cd ../.. && rm -rf SoapyPlutoSDR
 sudo ldconfig
+```
 
-# Verify the PlutoSDR is reachable (should list Analog Devices PlutoSDR):
+If using **PlutoSDR over USB**, add a udev rule for non-root access:
+
+```shell
+echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="0456", ATTR{idProduct}=="b673", MODE="0666"' \
+  | sudo tee /etc/udev/rules.d/53-plutosdr.rules
+sudo udevadm control --reload-rules && sudo udevadm trigger
+```
+
+Verify:
+
+```shell
+# PlutoSDR reachable (should list Analog Devices PlutoSDR):
 iio_info -s
 
-# Verify SoapySDR sees the module:
+# SoapySDR sees the module:
 SoapySDRUtil --find="driver=plutosdr"
 ```
 
@@ -387,6 +406,29 @@ cmake .. && make -j$(nproc) && sudo make install
 cd ../.. && rm -rf SoapyBladeRF
 sudo ldconfig
 ```
+
+**USB permissions** — add a udev rule so the bladeRF is accessible without
+root:
+
+```shell
+echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="2cf0", MODE="0666"' \
+  | sudo tee /etc/udev/rules.d/53-bladerf.rules
+sudo udevadm control --reload-rules && sudo udevadm trigger
+```
+
+Unplug and re-plug the bladeRF after applying.
+
+**FPGA bitstream** — the bladeRF 2.0 needs an FPGA image loaded at each
+power-on.  Flash it to auto-load so this is handled permanently:
+
+```shell
+wget https://www.nuand.com/fpga/hostedxA4-latest.rbf -O /tmp/hostedxA4.rbf
+bladeRF-cli -L /tmp/hostedxA4.rbf
+```
+
+> Capital `-L` writes the FPGA image to flash so it loads automatically on
+> every power-on.  If you skip this step, the app will fail on first connect
+> and leave the bladeRF in a bad state requiring a power cycle.
 
 Verify with `SoapySDRUtil --info` — you should see `plutosdr` and/or
 `bladerf` listed under "Available factories".
@@ -541,21 +583,23 @@ SoapySDRUtil --info
 
 ### bladeRF FPGA not loaded
 
-The bladeRF 2.0 requires an FPGA bitstream loaded at each power-on.  If
-streaming fails with NIOS II errors, load the FPGA manually:
+The bladeRF 2.0 requires an FPGA bitstream.  If the FPGA has not been
+flashed to auto-load (see setup sections above), it must be loaded manually
+at each power-on.  Without a loaded FPGA, the app will fail on the first
+connection attempt and leave the bladeRF in a bad state that requires a
+**USB power cycle** (unplug and re-plug).
+
+**Recommended fix** — flash once so it auto-loads permanently:
 
 ```shell
-# Download the A4 FPGA image (once):
 wget https://www.nuand.com/fpga/hostedxA4-latest.rbf -O /tmp/hostedxA4.rbf
-
-# Load it:
-bladeRF-cli -l /tmp/hostedxA4.rbf
+bladeRF-cli -L /tmp/hostedxA4.rbf
 ```
 
-To have it load automatically, write the FPGA image to flash (capital `-L`):
+If you only need to load for the current session (lowercase `-l`):
 
 ```shell
-bladeRF-cli -L /tmp/hostedxA4.rbf
+bladeRF-cli -l /tmp/hostedxA4.rbf
 ```
 
 ### bladeRF firmware version
@@ -632,19 +676,7 @@ iio_info -u ip:192.168.2.1
 
 ### USB permissions on Linux
 
-If the SDR is not detected as a non-root user, add a udev rule:
-
-```shell
-# PlutoSDR
-echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="0456", ATTR{idProduct}=="b673", MODE="0666"' \
-  | sudo tee /etc/udev/rules.d/53-plutosdr.rules
-
-# bladeRF
-echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="2cf0", MODE="0666"' \
-  | sudo tee /etc/udev/rules.d/53-bladerf.rules
-
-sudo udevadm control --reload-rules
-sudo udevadm trigger
-```
-
-Unplug and re-plug the device.
+If the SDR is not detected as a non-root user, you likely missed the udev
+rule during setup.  See the udev steps in the
+[Native on Linux](#setup--native-on-linux) section above.  After applying
+the rule, unplug and re-plug the device.

@@ -50,6 +50,7 @@ Initial connection retries (SDR not yet plugged in) DO work in-process.
 - Base: Ubuntu 22.04 + GNU Radio from PPA
 - CRITICAL: GNU Radio packages (apt and Homebrew) are compiled against NumPy 1.x. Both setup.py and Dockerfile pin `numpy>=1.26,<2`. If this constraint is removed, `gnuradio` will fail to import with `_ARRAY_API not found`.
 - `vmcircbuf` backend set to `shmem` in `/root/.gnuradio/prefs/` (required for GNU Radio in containers).
+- `entrypoint.sh` auto-loads bladeRF FPGA from `/opt/bladerf/hostedxA4.rbf` when `SDR_TYPE=bladerf`.
 - Run with: `docker run --restart unless-stopped -d -p 8050:8050 -e PLUTO_URI=ip:192.168.2.1 pluto_container`
 
 ## Known issues and platform notes
@@ -87,11 +88,18 @@ Harmless `[ERROR] duplicate entry for bladerf` in Docker logs. Both `/usr/local/
 ### bladeRF 2.0 Micro A4
 - macOS native (Apple Silicon): FAILED — USB streaming instability (known ARM bug, GitHub #977). NIOS II timeouts after a few successful reads. GNU Radio's C++ threading did not help.
 - Docker on macOS: not tested (USB passthrough doesn't work on Docker Desktop for Mac)
-- **x86 Linux: NOT YET TESTED** — this is the primary next step
+- Linux native (x86, Ubuntu 22.04): PASSED — stable IQ streaming via gr-soapy, FPGA v0.16.0, firmware 2.6.0. Required udev rule + FPGA flash (`bladeRF-cli -L`) as one-time setup.
+- Linux Docker: not yet tested (should work — entrypoint auto-loads FPGA)
 
-## Next steps (x86 Linux machine)
+### bladeRF setup gotchas (for AI assistants)
+- **ALWAYS flash FPGA before first use**: `bladeRF-cli -L /tmp/hostedxA4.rbf` (capital -L = persists across power cycles). Without FPGA, opening the device leaves it in a bad state requiring USB power cycle.
+- **ALWAYS set up udev rules** for non-root USB access on Linux.
+- **NEVER try to connect to a bladeRF without FPGA loaded** — it corrupts the USB state and requires physical unplug/replug.
+- The Docker entrypoint handles FPGA loading automatically via the pre-downloaded image at `/opt/bladerf/hostedxA4.rbf`.
 
-1. **Test bladeRF in Docker on x86 Linux** — this is the key validation. The ARM USB bug should not affect x86.
+## Next steps
+
+1. **Test bladeRF in Docker on x86 Linux** — entrypoint should auto-load FPGA.
    ```
    docker run --restart unless-stopped -d -p 8050:8050 --privileged -e SDR_TYPE=bladerf pluto_container
    ```

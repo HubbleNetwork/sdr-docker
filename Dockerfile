@@ -49,6 +49,11 @@ RUN git clone --depth 1 https://github.com/pothosware/SoapyBladeRF.git /tmp/Soap
     rm -rf /tmp/SoapyBladeRF && \
     ldconfig
 
+# Pre-download bladeRF FPGA image so the entrypoint can load it at runtime
+RUN mkdir -p /opt/bladerf && \
+    wget -q https://www.nuand.com/fpga/hostedxA4-latest.rbf \
+         -O /opt/bladerf/hostedxA4.rbf
+
 # Without these lines the GNU Radio vmcircbuf backend fails to initialise
 RUN mkdir -p /root/.gnuradio/prefs && \
     echo "vmcircbuf_default_factory=shmem" > /root/.gnuradio/prefs/vmcircbuf_default_factory
@@ -60,6 +65,7 @@ WORKDIR /app
 COPY setup.py /app/
 COPY run_stream.py /app/
 COPY src/ /app/src/
+COPY entrypoint.sh /app/
 
 # Install the python package
 # GNU Radio from the Ubuntu PPA is compiled against NumPy 1.x;
@@ -71,4 +77,5 @@ RUN python3 -m pip install --ignore-installed -e . "numpy>=1.26,<2"
 
 # Start the live spectrogram + decoder web server
 EXPOSE 8050
+ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["python3", "run_stream.py"]
