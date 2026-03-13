@@ -191,7 +191,7 @@ def processor_main(shm_name, buf_write_idx_val, rx_peak_frac_val,
                 matches = [a for a in attempts
                            if a.get("chipset") == td_chipset
                            and not a.get("decoded")
-                           and not any(abs(a.get("time_s", 0) - t) < 0.15
+                           and not any(abs(a.get("time_s", 0) - t) < 0.5
                                        for t in ok_times)]
                 if matches:
                     td_hit = matches[0]
