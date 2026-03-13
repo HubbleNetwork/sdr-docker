@@ -186,9 +186,13 @@ def processor_main(shm_name, buf_write_idx_val, rx_peak_frac_val,
             td_hit = None
 
             if td_chipset:
+                ok_times = [p["time_s"] for p in packets
+                            if p.get("chipset") == td_chipset]
                 matches = [a for a in attempts
                            if a.get("chipset") == td_chipset
-                           and not a.get("decoded")]
+                           and not a.get("decoded")
+                           and not any(abs(a.get("time_s", 0) - t) < 0.15
+                                       for t in ok_times)]
                 if matches:
                     td_hit = matches[0]
             elif td_ntw_id is not None:
