@@ -162,7 +162,28 @@ def _demod_one_symbol(sig_segment, F0, synth_res_val, chan_mask):
     peak_freq = _interp_peak(psd_masked, peak_bin, config.fft_freqs)
     fsk_bin = int(round((peak_freq - F0) / synth_res_val))
     fsk_bin = max(0, min(config.NUM_FSK_BINS - 1, fsk_bin))
-    return fsk_bin, peak_freq, psd[peak_bin]
+    return fsk_bin, peak_freq, psd_masked[peak_bin]
+
+
+_TIMING_SEARCH = int(0.1e-3 * config.SAMPLE_RATE)  # ±78 samples
+_TIMING_STEP = max(1, (2 * _TIMING_SEARCH) // 9)   # 10 positions
+_TIMING_STEPS = np.arange(-_TIMING_SEARCH, _TIMING_SEARCH + 1, _TIMING_STEP)
+
+
+def _demod_best(signal, s0, F0, synth_res_val, chan_mask):
+    """Demod with ±0.1 ms timing search. Returns (fsk_bin, peak_freq, best_offset)."""
+    sym_len = config.samples_per_symbol
+    best_bin, best_freq, best_power, best_off = 0, 0.0, -1.0, 0
+    for off in _TIMING_STEPS:
+        s = s0 + off
+        if s < 0 or s + sym_len > len(signal):
+            continue
+        fsk_bin, peak_freq, peak_power = _demod_one_symbol(
+            signal[s: s + sym_len], F0, synth_res_val, chan_mask,
+        )
+        if peak_power > best_power:
+            best_bin, best_freq, best_power, best_off = fsk_bin, peak_freq, peak_power, int(off)
+    return best_bin, best_freq, best_off
 
 
 def _interp_peak(psd, bin_idx, freqs):
@@ -375,18 +396,17 @@ def _decode_v1(signal, start_sample, sps):
         F31_snr=round(F31_snr, 1),
     )
 
-    # Demodulate header (6 symbols, same channel)
+    # Demodulate header (6 symbols, same channel) with timing tolerance
     chan_mask = _build_chan_mask(F0, synth_res_val)
     header_syms = []
+    drift = 0
     for h in range(config.NUM_HEADER_SYMS):
         sym_abs_idx = config.PREAMBLE_LEN + h
-        s0 = start_sample + sym_abs_idx * sps["slot"]
+        s0 = start_sample + sym_abs_idx * sps["slot"] + drift
         if s0 + config.samples_per_symbol > len(signal):
             return None, None
-        fsk_bin, _, _ = _demod_one_symbol(
-            signal[s0: s0 + config.samples_per_symbol],
-            F0, synth_res_val, chan_mask,
-        )
+        fsk_bin, _, off = _demod_best(signal, s0, F0, synth_res_val, chan_mask)
+        drift += off
         header_syms.append(fsk_bin)
 
     _last_attempt["header_syms"] = list(header_syms)
@@ -422,14 +442,14 @@ def _decode_v1(signal, start_sample, sps):
         _last_attempt["reason"] = "hop_fail"
         return None, None
 
-    # Demodulate PDU with frequency hopping
+    # Demodulate PDU with frequency hopping and timing tolerance
     current_channel = channel_num
     F0_current = F0
     pdu_syms = []
 
     for p_idx in range(num_pdu_symbols):
         sym_abs_idx = config.PREAMBLE_LEN + config.NUM_HEADER_SYMS + p_idx
-        s0 = start_sample + sym_abs_idx * sps["slot"]
+        s0 = start_sample + sym_abs_idx * sps["slot"] + drift
         if s0 + config.samples_per_symbol > len(signal):
             break
 
@@ -441,10 +461,8 @@ def _decode_v1(signal, start_sample, sps):
             chan_mask = _build_chan_mask(F0_current, synth_res_val)
             current_channel = next_channel
 
-        fsk_bin, _, _ = _demod_one_symbol(
-            signal[s0: s0 + config.samples_per_symbol],
-            F0_current, synth_res_val, chan_mask,
-        )
+        fsk_bin, _, off = _demod_best(signal, s0, F0_current, synth_res_val, chan_mask)
+        drift += off
         pdu_syms.append(fsk_bin)
 
     if len(pdu_syms) != num_pdu_symbols:

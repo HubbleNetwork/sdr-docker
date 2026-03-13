@@ -1,13 +1,20 @@
-"""Flask web application and thread orchestration.
+"""Flask web application and process orchestration.
 
 Serves the live spectrogram dashboard on port 8050 and coordinates the
-SDR RX, processor, and Flask server threads.
+SDR RX thread, processor *process*, and Flask server.
+
+The processor runs in a **separate OS process** so its Python GIL is
+independent of the RX thread.  This prevents spectrogram/decode
+computation from stalling the real-time sample stream and causing
+sample drops.
 """
 
 import base64
 import logging
+import multiprocessing as mp
 import threading
 from collections import deque
+from multiprocessing import shared_memory
 
 import numpy as np
 import io
@@ -16,7 +23,7 @@ from flask import Flask, Response, jsonify, render_template, request as flask_re
 
 from . import config
 from .decoder import get_chipset_stats, reset_chipset_stats
-from .processor import process_loop
+from .processor import processor_main
 from .sdr import rx_loop
 
 
@@ -24,22 +31,61 @@ from .sdr import rx_loop
 # Shared application state
 # ===========================================================================
 
+_IQ_SHM_NAME = "pluto_iq_buf"
+_IQ_NBYTES = config.IQ_BUFFER_SIZE * np.dtype(np.complex64).itemsize
+
+
 class SharedState:
-    """Thread-safe mutable state shared between RX, processor, and Flask."""
+    """State shared between RX thread, processor process, and Flask.
+
+    The IQ circular buffer lives in POSIX shared memory so the processor
+    process can read it without any copy or GIL contention.  Simple
+    scalars use ``multiprocessing.Value`` (atomic on CPython).  Everything
+    else stays in normal Python objects protected by a threading lock
+    (only accessed within the main process).
+    """
 
     def __init__(self):
         self.lock = threading.Lock()
-        self.running = threading.Event()
+        self.running = mp.Event()
         self.rx_connected = threading.Event()
 
-        # IQ circular buffer
-        self.iq_buffer = np.zeros(config.IQ_BUFFER_SIZE, dtype=np.complex64)
-        self.buf_write_idx = 0
+        # --- shared memory IQ buffer (RX writes, processor reads) ---
+        try:
+            shared_memory.SharedMemory(name=_IQ_SHM_NAME).unlink()
+        except FileNotFoundError:
+            pass
+        self._shm = shared_memory.SharedMemory(
+            name=_IQ_SHM_NAME, create=True, size=_IQ_NBYTES,
+        )
+        self.iq_buffer = np.ndarray(
+            config.IQ_BUFFER_SIZE, dtype=np.complex64, buffer=self._shm.buf,
+        )
+        self.iq_buffer[:] = 0
 
-        # Rolling spectrogram chunks
+        # --- multiprocessing-safe scalars (accessed by RX + processor) ---
+        self._buf_write_idx = mp.Value("q", 0)       # unsigned‐long‐long
+        self._rx_peak_frac = mp.Value("d", 0.0)
+        self._rx_overflows = mp.Value("i", 0)
+        self._rx_gain_dB = mp.Value("d", config.RX_INITIAL_GAIN_DB)
+
+        # --- control values read by the processor (mp-safe) ---
+        self._td_running = mp.Value("b", 0)
+        self._td_target_ntw_id = mp.Value("q", 0)    # 0 = None
+        self._td_has_ntw_id = mp.Value("b", 0)       # flag
+        self._lo_freq_hz = mp.Value("q", config.CENTER_FREQ_HZ)
+
+        # td_target_chipset needs a string; use a fixed-size mp.Array
+        self._td_chipset_arr = mp.Array("c", 32)
+
+        # --- drop positions (RX→processor, lock-free via mp.Queue) ---
+        self.drop_queue: mp.Queue = mp.Queue()
+
+        # --- results coming back from processor (via mp.Queue) ---
+        self.result_queue: mp.Queue = mp.Queue()
+
+        # --- main-process-only state (Flask / result drainer) ---
         self.spec_chunks: deque = deque(maxlen=config.MAX_SPEC_CHUNKS)
-
-        # Data served to the web page
         self.latest_img: bytes = b""
         self.latest_detections: list[dict] = []
         self.decode_results: list[dict] = []
@@ -49,21 +95,99 @@ class SharedState:
             "t_spec_ms": 0, "t_render_ms": 0, "t_decode_ms": 0,
         }
 
-        # Time-domain plot state
-        self.td_target_ntw_id: int | None = None
-        self.td_target_chipset: str | None = None
-        self.td_running = False
         self.td_latest_img: bytes = b""
         self.td_status: str = ""
         self.td_decode_info: dict | None = None
         self.td_iq_segment: np.ndarray | None = None
 
-        # AGC state
-        self.rx_gain_dB: float = config.RX_INITIAL_GAIN_DB
-        self.rx_peak_frac: float = 0.0
+    def cleanup_shm(self):
+        try:
+            self._shm.close()
+            self._shm.unlink()
+        except Exception:
+            pass
 
-        # LO frequency (mutable at runtime in 1 kHz steps)
-        self.lo_freq_hz: int = config.CENTER_FREQ_HZ
+    # --- properties that wrap mp.Value for transparent access ---
+
+    @property
+    def buf_write_idx(self):
+        return self._buf_write_idx.value
+
+    @buf_write_idx.setter
+    def buf_write_idx(self, v):
+        self._buf_write_idx.value = v
+
+    @property
+    def rx_peak_frac(self):
+        return self._rx_peak_frac.value
+
+    @rx_peak_frac.setter
+    def rx_peak_frac(self, v):
+        self._rx_peak_frac.value = v
+
+    @property
+    def rx_overflows(self):
+        return self._rx_overflows.value
+
+    @rx_overflows.setter
+    def rx_overflows(self, v):
+        self._rx_overflows.value = v
+
+    @property
+    def rx_gain_dB(self):
+        return self._rx_gain_dB.value
+
+    @rx_gain_dB.setter
+    def rx_gain_dB(self, v):
+        self._rx_gain_dB.value = v
+
+    @property
+    def lo_freq_hz(self):
+        return self._lo_freq_hz.value
+
+    @lo_freq_hz.setter
+    def lo_freq_hz(self, v):
+        self._lo_freq_hz.value = v
+
+    @property
+    def td_running(self):
+        return bool(self._td_running.value)
+
+    @td_running.setter
+    def td_running(self, v):
+        self._td_running.value = int(bool(v))
+
+    @property
+    def td_target_ntw_id(self):
+        if not self._td_has_ntw_id.value:
+            return None
+        return self._td_target_ntw_id.value
+
+    @td_target_ntw_id.setter
+    def td_target_ntw_id(self, v):
+        if v is None:
+            self._td_has_ntw_id.value = 0
+        else:
+            self._td_target_ntw_id.value = int(v)
+            self._td_has_ntw_id.value = 1
+
+    @property
+    def td_target_chipset(self):
+        raw = self._td_chipset_arr.value
+        return raw.decode() if raw else None
+
+    @td_target_chipset.setter
+    def td_target_chipset(self, v):
+        self._td_chipset_arr.value = (v or "").encode()[:31]
+
+    # legacy compat — RX pushes drop positions via queue now
+    @property
+    def rx_drop_positions(self):
+        return []
+
+    @rx_drop_positions.setter
+    def rx_drop_positions(self, v):
+        pass
 
 
 state = SharedState()
@@ -237,25 +361,82 @@ def api_td_info():
 
 
 # ===========================================================================
+# Result drainer — receives processor output via mp.Queue
+# ===========================================================================
+
+def _drain_results(state):
+    """Background thread: pull results from the processor process."""
+    import queue as _queue
+    while state.running.is_set():
+        try:
+            r = state.result_queue.get(timeout=0.1)
+        except _queue.Empty:
+            continue
+        with state.lock:
+            if r.get("img"):
+                state.latest_img = r["img"]
+            if r.get("detections") is not None:
+                state.latest_detections = r["detections"]
+            if r.get("decode_entries"):
+                state.decode_results.extend(r["decode_entries"])
+                state.decode_results[:] = state.decode_results[-config.MAX_DECODE_HISTORY:]
+            if r.get("stats"):
+                state.decode_stats = r["stats"]
+            if r.get("td_img") is not None:
+                state.td_latest_img = r["td_img"]
+            if r.get("td_status") is not None:
+                state.td_status = r["td_status"]
+            if r.get("td_decode_info") is not None:
+                state.td_decode_info = r["td_decode_info"]
+            if r.get("td_iq_segment") is not None:
+                state.td_iq_segment = r["td_iq_segment"]
+
+
+# ===========================================================================
 # Entry point
 # ===========================================================================
 
 def main():
-    """Start all threads and run the Flask server (blocking)."""
+    """Start RX thread, processor process, result drainer, and Flask."""
     state.running.set()
+
+    # Fork the processor BEFORE starting any threads (safe on macOS)
+    proc = mp.Process(
+        target=processor_main,
+        args=(
+            _IQ_SHM_NAME,
+            state._buf_write_idx,
+            state._rx_peak_frac,
+            state._rx_overflows,
+            state._rx_gain_dB,
+            state._td_running,
+            state._td_target_ntw_id,
+            state._td_has_ntw_id,
+            state._td_chipset_arr,
+            state.running,
+            state.drop_queue,
+            state.result_queue,
+        ),
+        daemon=True,
+    )
+    proc.start()
 
     rx_thread = threading.Thread(target=rx_loop, args=(state,), daemon=True)
     rx_thread.start()
 
-    proc_thread = threading.Thread(target=process_loop, args=(state,), daemon=True)
-    proc_thread.start()
+    drain_thread = threading.Thread(target=_drain_results, args=(state,),
+                                    daemon=True)
+    drain_thread.start()
 
-    print(f"[main] All threads started.")
+    print("[main] RX thread + processor process started.")
     print(f"[main] Open http://localhost:{config.FLASK_PORT} in a browser.")
 
-    app.run(
-        host="0.0.0.0",
-        port=config.FLASK_PORT,
-        threaded=True,
-        use_reloader=False,
-    )
+    try:
+        app.run(
+            host="0.0.0.0",
+            port=config.FLASK_PORT,
+            threaded=True,
+            use_reloader=False,
+        )
+    finally:
+        state.cleanup_shm()

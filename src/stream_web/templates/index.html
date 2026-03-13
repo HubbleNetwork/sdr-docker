@@ -14,6 +14,7 @@
     &nbsp;|&nbsp; Decode: <span id="td">&mdash;</span> ms
     &nbsp;|&nbsp; Detections: <span id="nd">&mdash;</span> (<span id="nu">&mdash;</span> unique devices)
     &nbsp;|&nbsp; Gain: <span id="gn">&mdash;</span> dB (<span id="pk">&mdash;</span>%)
+    &nbsp;|&nbsp; RX Sample Drops: <span id="ov" title="Number of detected gaps in the SDR sample stream (not decode failures)">0</span>
     &nbsp;|&nbsp; Status: <span id="rt" class="ok">&mdash;</span>
   </div>
   <div class="toolbar">
@@ -75,7 +76,7 @@
       <input id="td-dev-input" type="text" placeholder="Device ID (decimal)" />
     </div>
     <div id="td-chipset-controls">
-      <span class="toolbar-label">By Chipset:</span>
+      <span class="toolbar-label">Capture failures for:</span>
       <span id="td-chipset-btns"></span>
     </div>
     <div id="td-action-bar">
@@ -111,6 +112,7 @@
     var rtEl = document.getElementById('rt');
     var gnEl = document.getElementById('gn');
     var pkEl = document.getElementById('pk');
+    var ovEl = document.getElementById('ov');
     var tbody = document.getElementById('dev-body');
     var tdBtnEl     = document.getElementById('td-btn');
     var tdInputEl   = document.getElementById('td-dev-input');
@@ -151,6 +153,8 @@
           ? Number(d.stats.rx_gain_dB).toFixed(0) : '\u2014';
         pkEl.textContent = d.stats.rx_peak_pct != null
           ? Number(d.stats.rx_peak_pct).toFixed(0) : '\u2014';
+        ovEl.textContent = d.stats.rx_overflows || 0;
+        if (d.stats.rx_overflows > 0) ovEl.style.color = '#ff4444';
 
         var ms = d.stats.process_time_ms;
         if (ms > 0 && ms < 1000) {

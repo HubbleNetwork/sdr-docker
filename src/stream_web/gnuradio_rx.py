@@ -67,9 +67,10 @@ class _BufferSink(gr.sync_block):
     buffer and updates peak-fraction state for the web dashboard.
 
     GNU Radio calls ``work()`` with small chunks (often ~1024 samples).
-    Most chunks contain only noise between transmissions, so a per-chunk
-    peak would read near-zero most of the time.  Instead, we track a
-    running peak that only decays after the processor reads it.
+    This is the real-time hot path — no locks are taken here.  The
+    circular buffer is single-producer (this thread) / single-consumer
+    (processor thread), so lock-free operation is safe.  Python's GIL
+    guarantees atomic integer writes for ``buf_write_idx``.
     """
 
     def __init__(self, state: SharedState):
@@ -82,12 +83,29 @@ class _BufferSink(gr.sync_block):
         self._state = state
         self._running_peak: float = 0.0
         self.last_work_time: float = time.monotonic()
+        self._prev_work_time: float = self.last_work_time
 
     def work(self, input_items, output_items):  # noqa: ARG002
         samples = input_items[0]
         n = len(samples)
         state = self._state
-        self.last_work_time = time.monotonic()
+        now = time.monotonic()
+
+        # Overflow detection: a gap > 50 ms between work() calls means the
+        # GNU Radio scheduler was starved — the SDR's USB/DMA buffers likely
+        # overflowed and samples were silently lost.
+        gap_s = now - self._prev_work_time
+        if gap_s > 0.050 and self._prev_work_time > 0:
+            state.rx_overflows += 1
+            try:
+                state.drop_queue.put_nowait(state.buf_write_idx)
+            except Exception:
+                pass
+            if state.rx_overflows <= 20 or state.rx_overflows % 100 == 0:
+                print(f"[RX] WARNING: probable sample drop #{state.rx_overflows} "
+                      f"(gap={gap_s*1000:.1f}ms)")
+        self._prev_work_time = now
+        self.last_work_time = now
 
         peak = float(max(np.max(np.abs(samples.real)),
                         np.max(np.abs(samples.imag))))
@@ -97,18 +115,17 @@ class _BufferSink(gr.sync_block):
         state.rx_peak_frac = self._running_peak
         self._running_peak *= 0.999
 
-        with state.lock:
-            buf = state.iq_buffer
-            wi = state.buf_write_idx
-            space = config.IQ_BUFFER_SIZE - wi
-            if n <= space:
-                buf[wi:wi + n] = samples
-                state.buf_write_idx = wi + n
-            else:
-                buf[wi:] = samples[:space]
-                remainder = n - space
-                buf[:remainder] = samples[space:]
-                state.buf_write_idx = remainder
+        buf = state.iq_buffer
+        wi = state.buf_write_idx
+        space = config.IQ_BUFFER_SIZE - wi
+        if n <= space:
+            buf[wi:wi + n] = samples
+            state.buf_write_idx = wi + n
+        else:
+            buf[wi:] = samples[:space]
+            remainder = n - space
+            buf[:remainder] = samples[space:]
+            state.buf_write_idx = remainder
 
         return n
 
@@ -127,8 +144,6 @@ class SDRFlowgraph(gr.top_block):
 
         dev_args = _soapy_driver_args()
 
-        # Constructor: (device, type, nchan, dev_args, stream_args,
-        #               tune_args, other_settings)
         self._source = soapy.source(dev_args, "fc32", 1, "", "",
                                     [""], [""])
 

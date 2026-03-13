@@ -172,7 +172,11 @@ def render_td_plot(iq_segment: np.ndarray, decode_info: dict | None = None) -> b
             psd[-dc_zone:] = 0
         pk = np.argmax(psd)
         sym_freqs.append(freqs[pk])
-    f0 = sym_freqs[1] if len(sym_freqs) > 1 else (sym_freqs[0] if sym_freqs else 0.0)
+
+    if decode_info and decode_info.get("F0_hz") is not None:
+        f0 = decode_info["F0_hz"]
+    else:
+        f0 = sym_freqs[1] if len(sym_freqs) > 1 else (sym_freqs[0] if sym_freqs else 0.0)
 
     for i, (s, e) in enumerate(zip(starts, ends)):
         t0 = s / config.SAMPLE_RATE * 1e3
@@ -184,7 +188,7 @@ def render_td_plot(iq_segment: np.ndarray, decode_info: dict | None = None) -> b
         if i == 0:
             lbl = f"F31={sym_freqs[i]:.0f}"
         elif i == 1:
-            lbl = f"F0={sym_freqs[i]:.0f}"
+            lbl = f"F0={f0:.0f}"
         else:
             lbl = f"{df:+.0f}"
         y_mid = (0 + y_floor) / 2

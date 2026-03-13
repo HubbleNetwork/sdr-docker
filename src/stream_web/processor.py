@@ -1,14 +1,16 @@
-"""Processing thread: spectrogram computation, decode, and image rendering.
+"""Processor — runs in a **separate OS process** to avoid GIL contention
+with the real-time SDR RX thread.
 
-Runs every DECODE_INTERVAL_S (0.5 s):
-  1. Compute a 0.5 s spectrogram chunk from the latest IQ data.
-  2. Run the dual-protocol decoder on the latest 1 s of IQ data.
-  3. Maintain persistent detection history for box overlay.
-  4. Render the rolling spectrogram image with detection boxes.
-  5. Optionally render a time-domain plot for a tracked device.
+Communicates with the main process via:
+  * POSIX shared memory  — IQ circular buffer (read-only here)
+  * multiprocessing.Value — buf_write_idx and control scalars
+  * multiprocessing.Queue — results back to main, drop positions in
 """
 
+import queue
 import time
+from collections import deque
+from multiprocessing import shared_memory
 
 import numpy as np
 
@@ -17,30 +19,67 @@ from .decoder import decode_signal
 from .spectrogram import compute_spec_chunk, render_spec_image, render_td_plot
 
 
-def process_loop(state):
-    """Main processing loop — runs as a daemon thread."""
-    while state.running.is_set():
+def processor_main(shm_name, buf_write_idx_val, rx_peak_frac_val,
+                   rx_overflows_val, rx_gain_dB_val, td_running_val,
+                   td_ntw_id_val, td_has_ntw_val, td_chipset_arr,
+                   running_event, drop_queue, result_queue):
+    """Entry point for the processor process."""
+
+    shm = shared_memory.SharedMemory(name=shm_name, create=False)
+    iq_buffer = np.ndarray(config.IQ_BUFFER_SIZE, dtype=np.complex64,
+                           buffer=shm.buf)
+
+    spec_chunks: deque = deque(maxlen=config.MAX_SPEC_CHUNKS)
+    detection_history: list[dict] = []
+
+    buf_len = config.IQ_BUFFER_SIZE
+
+    print("[PROC] Processor process started (separate GIL).", flush=True)
+
+    while running_event.is_set():
         t0 = time.perf_counter()
 
-        with state.lock:
-            full_buf = state.iq_buffer.copy()
-            widx = state.buf_write_idx
+        widx = buf_write_idx_val.value
 
-        ordered = np.concatenate([full_buf[widx:], full_buf[:widx]])
+        # Drain drop positions from queue
+        drop_positions = []
+        while True:
+            try:
+                drop_positions.append(drop_queue.get_nowait())
+            except queue.Empty:
+                break
 
-        # 1) Spectrogram: compute latest 0.5 s chunk
+        decode_start = (widx - config.DECODE_SAMPLES) % buf_len
+        drop_sample_offsets = []
+        for dp in drop_positions:
+            if decode_start < widx:
+                if decode_start <= dp < widx:
+                    drop_sample_offsets.append(dp - decode_start)
+            else:
+                if dp >= decode_start:
+                    drop_sample_offsets.append(dp - decode_start)
+                elif dp < widx:
+                    drop_sample_offsets.append(buf_len - decode_start + dp)
+
+        def _extract_last(n):
+            start = (widx - n) % buf_len
+            if start < widx:
+                return iq_buffer[start:widx].copy()
+            return np.concatenate([iq_buffer[start:], iq_buffer[:widx]])
+
+        # 1) Spectrogram
         t_spec0 = time.perf_counter()
-        spec_chunk_iq = ordered[-config.SPEC_CHUNK_SAMPLES:]
+        spec_chunk_iq = _extract_last(config.SPEC_CHUNK_SAMPLES)
         try:
             sxx_chunk = compute_spec_chunk(spec_chunk_iq)
-            state.spec_chunks.append(sxx_chunk)
+            spec_chunks.append(sxx_chunk)
         except Exception as e:
             print(f"[PROC] Spec error: {e}")
         t_spec_ms = (time.perf_counter() - t_spec0) * 1000
 
-        # 2) Decode last 1 second
+        # 2) Decode
         t_dec0 = time.perf_counter()
-        decode_chunk = ordered[-config.DECODE_SAMPLES:]
+        decode_chunk = _extract_last(config.DECODE_SAMPLES)
         try:
             packets, detections, attempts = decode_signal(decode_chunk)
         except Exception as e:
@@ -48,23 +87,41 @@ def process_loop(state):
             packets, detections, attempts = [], [], []
         t_dec_ms = (time.perf_counter() - t_dec0) * 1000
 
-        # 3) Update persistent detection history
-        for d in state.detection_history:
+        # Annotate sample-drop failures
+        if drop_sample_offsets and attempts:
+            for att in attempts:
+                if att.get("decoded"):
+                    continue
+                pkt_start = att.get("start_sample",
+                                    int(att.get("time_s", 0) * config.SAMPLE_RATE))
+                dur_s = att.get("signal_duration_s", 0.05)
+                pkt_end = pkt_start + int(dur_s * config.SAMPLE_RATE)
+                for doff in drop_sample_offsets:
+                    if pkt_start <= doff <= pkt_end:
+                        att["sample_drop"] = True
+                        if att.get("reason") and att["reason"] != "ok":
+                            att["reason"] = f"{att['reason']}+sample_drop"
+                        else:
+                            att["reason"] = "sample_drop"
+                        break
+
+        # 3) Detection history (process-local)
+        for d in detection_history:
             d["offset_from_right"] += config.SPEC_CHUNK_S
-        state.detection_history = [
-            d for d in state.detection_history
+        detection_history = [
+            d for d in detection_history
             if d["offset_from_right"] <= config.SPEC_DURATION_S
         ]
         for det in detections:
             new_offset = config.DECODE_WINDOW_S - det["time_s"]
             is_dup = False
-            for existing in state.detection_history:
+            for existing in detection_history:
                 if (abs(existing["offset_from_right"] - new_offset) < 0.15
                         and abs(existing["freq_hz"] - det.get("F0_hz", det["freq_hz"])) < 5000):
                     is_dup = True
                     break
             if not is_dup:
-                state.detection_history.append({
+                detection_history.append({
                     "offset_from_right": new_offset,
                     "freq_hz": det.get("F0_hz", det["freq_hz"]),
                     "phy_ver": det["phy_ver"],
@@ -75,58 +132,68 @@ def process_loop(state):
                     "chipset": det.get("chipset", "v-1"),
                 })
 
-        # 4) Render spectrogram image
+        # 4) Render spectrogram
         t_render0 = time.perf_counter()
+        img_bytes = b""
         try:
-            img_bytes = render_spec_image(list(state.spec_chunks), state.detection_history)
-            with state.lock:
-                state.latest_img = img_bytes
-                state.latest_detections = detections
+            img_bytes = render_spec_image(list(spec_chunks), detection_history)
         except Exception as e:
             print(f"[PROC] Render error: {e}")
         t_render_ms = (time.perf_counter() - t_render0) * 1000
 
         dt_ms = (time.perf_counter() - t0) * 1000
 
-        with state.lock:
-            ts = time.strftime("%H:%M:%S")
-            for pkt in packets:
-                ver = pkt["phy_ver"]
-                ntw_hex = f"0x{pkt['ntw_id']:09X}" if ver == -1 else f"0x{pkt['ntw_id']:08X}"
-                state.decode_results.append({
-                    "timestamp": ts,
-                    "phy_ver": ver,
-                    "ntw_id": pkt["ntw_id"],
-                    "ntw_id_hex": ntw_hex,
-                    "seq_num": pkt["seq_num"],
-                    "energy_dB": round(pkt["total_energy_dB"], 1),
-                    "chipset": pkt.get("chipset", ""),
-                    "freq_delta_hz": pkt.get("freq_delta_hz"),
-                })
-            state.decode_results[:] = state.decode_results[-config.MAX_DECODE_HISTORY:]
-            state.decode_stats = {
-                "process_time_ms": round(dt_ms, 1),
-                "n_detections": len(packets),
+        ts = time.strftime("%H:%M:%S")
+        decode_entries = []
+        for pkt in packets:
+            ver = pkt["phy_ver"]
+            ntw_hex = f"0x{pkt['ntw_id']:09X}" if ver == -1 else f"0x{pkt['ntw_id']:08X}"
+            decode_entries.append({
                 "timestamp": ts,
-                "t_spec_ms": round(t_spec_ms, 1),
-                "t_render_ms": round(t_render_ms, 1),
-                "t_decode_ms": round(t_dec_ms, 1),
-                "rx_gain_dB": round(state.rx_gain_dB, 1),
-                "rx_peak_pct": round(state.rx_peak_frac * 100, 1),
-            }
+                "phy_ver": ver,
+                "ntw_id": pkt["ntw_id"],
+                "ntw_id_hex": ntw_hex,
+                "seq_num": pkt["seq_num"],
+                "energy_dB": round(pkt["total_energy_dB"], 1),
+                "chipset": pkt.get("chipset", ""),
+                "freq_delta_hz": pkt.get("freq_delta_hz"),
+            })
 
-        # 5) Time-domain plot for tracked device or chipset
-        if state.td_running:
+        stats = {
+            "process_time_ms": round(dt_ms, 1),
+            "n_detections": len(packets),
+            "timestamp": ts,
+            "t_spec_ms": round(t_spec_ms, 1),
+            "t_render_ms": round(t_render_ms, 1),
+            "t_decode_ms": round(t_dec_ms, 1),
+            "rx_gain_dB": round(rx_gain_dB_val.value, 1),
+            "rx_peak_pct": round(rx_peak_frac_val.value * 100, 1),
+            "rx_overflows": rx_overflows_val.value,
+        }
+
+        # 5) Time-domain plot
+        td_img = None
+        td_status_str = None
+        td_decode_info_out = None
+        td_iq_seg_out = None
+
+        td_on = bool(td_running_val.value)
+        td_chipset_raw = td_chipset_arr.value
+        td_chipset = td_chipset_raw.decode() if td_chipset_raw else None
+        td_ntw_id = td_ntw_id_val.value if td_has_ntw_val.value else None
+
+        if td_on:
             td_hit = None
 
-            if state.td_target_chipset:
+            if td_chipset:
                 matches = [a for a in attempts
-                           if a.get("chipset") == state.td_target_chipset]
+                           if a.get("chipset") == td_chipset
+                           and not a.get("decoded")]
                 if matches:
                     td_hit = matches[0]
-            elif state.td_target_ntw_id is not None:
+            elif td_ntw_id is not None:
                 matches = [p for p in packets
-                           if p["ntw_id"] == state.td_target_ntw_id]
+                           if p["ntw_id"] == td_ntw_id]
                 if matches:
                     td_hit = matches[0]
                     td_hit.setdefault("decoded", True)
@@ -159,32 +226,43 @@ def process_loop(state):
                             status += f" | DECODED seq={seq}"
                         else:
                             status += f" | FAILED: {decode_info['reason']}"
-                        serializable = {
+                        td_status_str = status
+                        td_decode_info_out = {
                             k: v for k, v in decode_info.items()
                             if isinstance(v, (str, int, float, bool, list, type(None)))
                         }
-                        with state.lock:
-                            state.td_latest_img = td_img
-                            state.td_status = status
-                            state.td_decode_info = serializable
-                            state.td_iq_segment = td_seg.copy()
+                        td_iq_seg_out = td_seg.copy()
                     except Exception as e:
                         print(f"[TD] Plot error: {e}")
-                        with state.lock:
-                            state.td_status = f"Render error: {e}"
+                        td_status_str = f"Render error: {e}"
             else:
-                with state.lock:
-                    if state.td_target_chipset:
-                        state.td_status = (
-                            f"Searching for {state.td_target_chipset}... "
-                            f"({len(packets)} decoded this cycle)"
-                        )
-                    elif state.td_target_ntw_id is not None:
-                        pkt_ids = [p["ntw_id"] for p in packets]
-                        state.td_status = (
-                            f"Searching... ({len(packets)} pkts, "
-                            f"IDs: {pkt_ids[:5]})"
-                        )
+                if td_chipset:
+                    td_status_str = (
+                        f"Waiting for {td_chipset} failure... "
+                        f"({len(packets)} decoded this cycle)"
+                    )
+                elif td_ntw_id is not None:
+                    pkt_ids = [p["ntw_id"] for p in packets]
+                    td_status_str = (
+                        f"Searching... ({len(packets)} pkts, "
+                        f"IDs: {pkt_ids[:5]})"
+                    )
+
+        # Send results to main process
+        result = {
+            "img": img_bytes,
+            "detections": detections,
+            "decode_entries": decode_entries,
+            "stats": stats,
+            "td_img": td_img,
+            "td_status": td_status_str,
+            "td_decode_info": td_decode_info_out,
+            "td_iq_segment": td_iq_seg_out,
+        }
+        try:
+            result_queue.put_nowait(result)
+        except Exception:
+            pass
 
         if config.VERBOSE:
             print(
@@ -196,3 +274,6 @@ def process_loop(state):
         sleep_s = max(0, config.DECODE_INTERVAL_S - elapsed)
         if sleep_s > 0:
             time.sleep(sleep_s)
+
+    shm.close()
+    print("[PROC] Processor process exiting.", flush=True)
