@@ -27,6 +27,9 @@ def cs_inc(chipset: str, field: str):
             "clamped_fail": 0, "pdu_fail": 0, "ok": 0,
         }
     _chipset_stats[chipset][field] += 1
+    _last_attempt["chipset"] = chipset
+    if field != "detected":
+        _last_attempt["reason"] = field
 
 
 def get_chipset_stats() -> dict:
@@ -39,6 +42,8 @@ def reset_chipset_stats():
 
 # -- Diagnostic counter for v1 verbose output -------------------------------
 _v1_diag_counter = 0
+
+_last_attempt: dict = {}
 
 
 # ===========================================================================
@@ -219,11 +224,13 @@ def _decode_vneg1(signal, start_sample, sps):
     F0_snr = psd_diff[F0_bin] / (np.median(np.abs(psd_diff)) + 1e-30)
 
     if F0_snr < config.PREAMBLE_F0_SNR_MIN:
+        _last_attempt["reason"] = "snr_fail"
         return None, None
 
     total_energy_dBFS = 10.0 * np.log10(
         psd_on[F0_bin] / (config.samples_per_symbol * config.ADC_FULL_SCALE) ** 2 + 1e-30
     )
+    _last_attempt.update(F0_hz=F0, energy_dB=total_energy_dBFS)
 
     # Channel mask and per-symbol peak frequency
     chan_mask = _build_chan_mask(F0, config.FREQ_STEP_VNEG1)
@@ -338,6 +345,7 @@ def _decode_v1(signal, start_sample, sps):
     F0_bin = np.argmax(psd_diff_0)
 
     if F31_snr < config.PREAMBLE_F0_SNR_MIN:
+        _last_attempt["reason"] = "snr_fail"
         if _diag:
             print(f"[v1-DIAG] FAIL snr: F31_snr={F31_snr:.1f} < {config.PREAMBLE_F0_SNR_MIN}")
         return None, None
@@ -360,6 +368,12 @@ def _decode_v1(signal, start_sample, sps):
     total_energy_dBFS = 10.0 * np.log10(
         max(psd_0[F0_bin], psd_31[F31_bin]) / (config.samples_per_symbol * config.ADC_FULL_SCALE) ** 2 + 1e-30
     )
+    _last_attempt.update(
+        F0_hz=F0, energy_dB=total_energy_dBFS,
+        measured_synth_res=round(measured_synth_res, 2),
+        synth_res_val=round(synth_res_val, 1),
+        F31_snr=round(F31_snr, 1),
+    )
 
     # Demodulate header (6 symbols, same channel)
     chan_mask = _build_chan_mask(F0, synth_res_val)
@@ -374,6 +388,8 @@ def _decode_v1(signal, start_sample, sps):
             F0, synth_res_val, chan_mask,
         )
         header_syms.append(fsk_bin)
+
+    _last_attempt["header_syms"] = list(header_syms)
 
     # RS decode header
     header_decoded, header_n_corr = _rs_decode(
@@ -394,16 +410,19 @@ def _decode_v1(signal, start_sample, sps):
 
     num_pdu_symbols = config.RS_N_V1[pkt_len_idx + 1]
     hopping_seq = config.HOPPING_SEQS[hop_seq_idx]
+    _last_attempt.update(
+        header_n_corr=int(header_n_corr),
+        channel_num=channel_num, hop_seq_idx=hop_seq_idx,
+        pkt_len_idx=pkt_len_idx, num_pdu_symbols=num_pdu_symbols,
+    )
 
     try:
         hop_index = hopping_seq.index(channel_num)
     except ValueError:
+        _last_attempt["reason"] = "hop_fail"
         return None, None
 
     # Demodulate PDU with frequency hopping
-    channel_step_bins = round(config.CHANNEL_SPACING / synth_res_val)
-    channel_step_hz = channel_step_bins * synth_res_val
-
     current_channel = channel_num
     F0_current = F0
     pdu_syms = []
@@ -418,7 +437,7 @@ def _decode_v1(signal, start_sample, sps):
             (hop_index + sym_abs_idx // config.NUM_SYM_PER_HOP) % config.NUM_CHANNELS
         ]
         if next_channel != current_channel:
-            F0_current += (next_channel - current_channel) * channel_step_hz
+            F0_current += (next_channel - current_channel) * config.CHANNEL_SPACING
             chan_mask = _build_chan_mask(F0_current, synth_res_val)
             current_channel = next_channel
 
@@ -429,12 +448,14 @@ def _decode_v1(signal, start_sample, sps):
         pdu_syms.append(fsk_bin)
 
     if len(pdu_syms) != num_pdu_symbols:
+        _last_attempt["reason"] = "pdu_incomplete"
         return None, None
 
     # Edge-symbol rejection
     all_data = header_syms + pdu_syms
     n_clamped = sum(1 for b in all_data if b == 0 or b == config.NUM_FSK_BINS - 1)
     if n_clamped / len(all_data) > config.MAX_CLAMPED_FRAC:
+        _last_attempt.update(n_clamped=n_clamped, total_data_syms=len(all_data))
         cs_inc(chipset_name, "clamped_fail")
         if _diag:
             print(f"[v1-DIAG] FAIL clamped: {n_clamped}/{len(all_data)}="
@@ -447,6 +468,7 @@ def _decode_v1(signal, start_sample, sps):
     de_scrambled = _data_de_scrambling(pdu_raw, channel_num)
     pdu_decoded, pdu_n_corr = _rs_decode(de_scrambled, config.RS_N_V1, config.RS_K_V1)
     if pdu_n_corr < 0:
+        _last_attempt["pdu_syms_head"] = pdu_syms[:10]
         cs_inc(chipset_name, "pdu_fail")
         if _diag:
             print(f"[v1-DIAG] FAIL pdu RS: chipset={chipset_name}, ch={channel_num}, "
@@ -473,11 +495,16 @@ def _decode_v1(signal, start_sample, sps):
     else:
         payload_val = int(remaining_bits, 2) if remaining_bits else 0
 
+    nominal_center_hz = (channel_num - config.LO_CHANNEL) * config.CHANNEL_SPACING
+    measured_center_hz = F0 + 31.5 * table_synth_res
+    freq_delta_hz = measured_center_hz - nominal_center_hz
+
     cs_inc(chipset_name, "ok")
     if _diag:
         print(f"[v1-DIAG] OK: chipset={chipset_name}, meas_sr={measured_synth_res:.2f}, "
               f"ntw=0x{ntw_id:08X}, seq={seq_num}, ch={channel_num}, "
-              f"hdr_corr={header_n_corr}, pdu_corr={pdu_n_corr}")
+              f"hdr_corr={header_n_corr}, pdu_corr={pdu_n_corr}, "
+              f"freq_delta={freq_delta_hz:.0f}")
 
     return (
         {"F0_hz": F0, "total_energy_dB": total_energy_dBFS},
@@ -489,6 +516,7 @@ def _decode_v1(signal, start_sample, sps):
             "header_n_corr": header_n_corr, "pdu_n_corr": pdu_n_corr,
             "measured_synth_res": round(measured_synth_res, 2),
             "num_pdu_symbols": num_pdu_symbols,
+            "freq_delta_hz": round(freq_delta_hz, 1),
         },
     )
 
@@ -500,9 +528,10 @@ def _decode_v1(signal, start_sample, sps):
 def decode_signal(signal):
     """Full dual-protocol decode pipeline on a 1-second IQ chunk.
 
-    Returns (decoded_packets, detection_list).
+    Returns (decoded_packets, detection_list, all_attempts).
     - decoded_packets: successfully decoded packets with MAC fields.
     - detection_list:  all preamble detections (for box overlay on spectrogram).
+    - all_attempts:    per-detection decode outcomes (chipset, decoded, reason).
     """
     sig = signal.copy()
     sig -= sig.mean()
@@ -520,7 +549,7 @@ def decode_signal(signal):
     Sxx_dB = (10.0 * np.log10(Sxx_det + 1e-12)).astype(np.float32)
     plow, phigh = np.percentile(Sxx_dB, [2, 99.5])
     if phigh <= plow:
-        return [], []
+        return [], [], []
     spec_img = np.clip((Sxx_dB - plow) / (phigh - plow) * 255, 0, 255).astype(np.uint8)
 
     # Dual-template detection
@@ -528,7 +557,7 @@ def decode_signal(signal):
         spec_img, t_det, f_det
     )
     if len(det_time_s) == 0:
-        return [], []
+        return [], [], []
 
     # Build detection info list (for box overlay)
     detection_list = []
@@ -544,34 +573,51 @@ def decode_signal(signal):
 
     # Decode each detection (dispatch by protocol version)
     decoded_packets = []
+    all_attempts = []
     for det in detection_list:
         start_sample = int(round(det["time_s"] * config.SAMPLE_RATE))
         ver = det["phy_ver"]
         sps = config.slot_samples[ver]
 
+        _last_attempt.clear()
         if ver == -1:
             pkt_info, result = _decode_vneg1(sig, start_sample, sps)
         else:
             pkt_info, result = _decode_v1(sig, start_sample, sps)
 
-        if pkt_info is None:
-            continue
-        if pkt_info["total_energy_dB"] < config.MIN_ENERGY_DBFS:
-            continue
+        attempt = {
+            "time_s": det["time_s"],
+            "freq_hz": det["freq_hz"],
+            "phy_ver": ver,
+            "score": det["score"],
+            "start_sample": start_sample,
+            "decoded": False,
+            "reason": "unknown",
+        }
+        attempt.update(_last_attempt)
 
-        result["time_s"] = det["time_s"]
-        result["freq_hz"] = det["freq_hz"]
-        result["F0_hz"] = pkt_info["F0_hz"]
-        result["total_energy_dB"] = pkt_info["total_energy_dB"]
-        result["score"] = det["score"]
-        result["preamble_duration_s"] = det["preamble_duration_s"]
-        ver = result["phy_ver"]
-        if ver == -1:
-            total_syms = config.SYMBOLS_PER_PACKET_VNEG1
-        else:
-            total_syms = config.PREAMBLE_LEN + config.NUM_HEADER_SYMS + result.get("num_pdu_symbols", 0)
-        result["signal_duration_s"] = total_syms * config.slot_samples[ver]["slot"] / config.SAMPLE_RATE
-        decoded_packets.append(result)
+        if pkt_info is not None and pkt_info["total_energy_dB"] >= config.MIN_ENERGY_DBFS:
+            result["time_s"] = det["time_s"]
+            result["freq_hz"] = det["freq_hz"]
+            result["F0_hz"] = pkt_info["F0_hz"]
+            result["total_energy_dB"] = pkt_info["total_energy_dB"]
+            result["score"] = det["score"]
+            result["preamble_duration_s"] = det["preamble_duration_s"]
+            ver = result["phy_ver"]
+            if ver == -1:
+                total_syms = config.SYMBOLS_PER_PACKET_VNEG1
+            else:
+                total_syms = config.PREAMBLE_LEN + config.NUM_HEADER_SYMS + result.get("num_pdu_symbols", 0)
+            result["signal_duration_s"] = total_syms * config.slot_samples[ver]["slot"] / config.SAMPLE_RATE
+            decoded_packets.append(result)
+            attempt["decoded"] = True
+            attempt["reason"] = "ok"
+            attempt["ntw_id"] = result.get("ntw_id")
+            attempt["seq_num"] = result.get("seq_num")
+        elif pkt_info is not None:
+            attempt["reason"] = "energy_too_low"
+
+        all_attempts.append(attempt)
 
     # De-duplicate
     unique: list[dict] = []
@@ -587,4 +633,4 @@ def decode_signal(signal):
         if not is_dup:
             unique.append(pkt)
 
-    return unique, unique
+    return unique, unique, all_attempts

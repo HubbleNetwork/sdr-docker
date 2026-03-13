@@ -159,6 +159,9 @@ class SDRFlowgraph(gr.top_block):
         self._source.set_gain_mode(0, False)
         self._source.set_gain(0, gain_db)
 
+    def set_frequency(self, freq_hz: int) -> None:
+        self._source.set_frequency(0, freq_hz)
+
     def seconds_since_last_sample(self) -> float:
         """How long since ``_BufferSink.work()`` was last called."""
         return time.monotonic() - self._sink.last_work_time
@@ -182,6 +185,7 @@ def rx_loop(state: SharedState) -> None:
         return
 
     cur_gain = config.RX_INITIAL_GAIN_DB
+    cur_freq = config.CENTER_FREQ_HZ
 
     while state.running.is_set():
         if fg.seconds_since_last_sample() > _STALE_TIMEOUT_S:
@@ -205,6 +209,17 @@ def rx_loop(state: SharedState) -> None:
             except Exception as e:
                 print(f"[GAIN] Failed to set {new_gain} dB: {e}")
                 state.rx_gain_dB = cur_gain
+
+        if state.lo_freq_hz != cur_freq:
+            new_freq = state.lo_freq_hz
+            try:
+                fg.set_frequency(new_freq)
+                cur_freq = new_freq
+                print(f"[LO] Tuned to {cur_freq / 1e9:.6f} GHz")
+            except Exception as e:
+                print(f"[LO] Failed to set {new_freq}: {e}")
+                state.lo_freq_hz = cur_freq
+
         time.sleep(0.2)
 
     _teardown(fg, state)

@@ -5,5 +5,3 @@ lives in :mod:`gnuradio_rx`.
 """
 
 from .gnuradio_rx import rx_loop
-
-__all__ = ["rx_loop"]

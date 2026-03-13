@@ -1,0 +1,40 @@
+---
+description: Native SDR setup gotchas for macOS and Linux — key pitfalls when building libiio, libad9361-iio, SoapyPlutoSDR, and running with GNU Radio outside Docker
+alwaysApply: true
+---
+
+# Native SDR Setup — Known Pitfalls
+
+## SoapySDR "no match" / "SDR not found"
+
+If the app starts but prints `SoapySDR::Device::make() no match`, the **SoapySDR device module** is missing (not a code bug). Run `SoapySDRUtil --info` and check:
+
+1. **Module not listed** — the SoapyPlutoSDR (or SoapyBladeRF) `.so` was never built/installed.
+2. **`dlopen() failed`** — the module exists but a dependency (libiio, libad9361) can't be loaded. Read the `dlopen` error for the exact missing library.
+
+## macOS: three libraries must be built from source for PlutoSDR
+
+Homebrew does not package libiio, libad9361-iio, or SoapyPlutoSDR. All three must be built with cmake and installed to `/opt/homebrew`. Critical cmake flags:
+
+- `-DOSX_FRAMEWORK=OFF -DOSX_PACKAGE=OFF` on libiio **and** libad9361-iio — without these, cmake produces a `.framework` bundle that requires root and breaks downstream rpath resolution.
+- After building, run `install_name_tool` to patch framework-style references (`@rpath/iio.framework/...`) to dylib references (`@rpath/libiio.0.dylib`) and add `/opt/homebrew/lib` to the rpath. Both `libad9361.dylib` and `libPlutoSDRSupport.so` need this fix.
+
+See the "Setup — Native on macOS" section of `README.md` for the exact commands.
+
+## GNU Radio Python bindings not found in venv
+
+GNU Radio is installed system-wide (brew/apt), not via pip. Always create the venv with:
+
+```shell
+python3 -m venv --system-site-packages .venv
+```
+
+If the venv already exists without `--system-site-packages`, either recreate it or add a `.pth` file pointing to the system `site-packages` (see README troubleshooting).
+
+## Do not modify `sdr.py` or `gnuradio_rx.py`
+
+`sdr.py` is a thin shim that re-exports `rx_loop` from `gnuradio_rx.py`. The GNU Radio + SoapySDR backend is the **only** supported SDR path. Do not add `pyadi-iio` fallbacks or rewrite these files — fix the system-level SoapySDR/libiio installation instead.
+
+## Linux: system packages cover libiio and libad9361
+
+On Ubuntu/Debian, `apt install libiio-dev libiio-utils libad9361-dev` provides both libraries. Only SoapyPlutoSDR needs to be built from source. Run `sudo ldconfig` after installing.

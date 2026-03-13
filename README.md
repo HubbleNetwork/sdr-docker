@@ -83,7 +83,7 @@ dependencies and their build steps.
 
 | SDR | Device library | SoapySDR module | Notes |
 |-----|---------------|-----------------|-------|
-| PlutoSDR | libiio (>= 0.23 works) | [SoapyPlutoSDR](https://github.com/pothosware/SoapyPlutoSDR) (build from source) | libiio is `apt install` on Linux; must build from source on macOS |
+| PlutoSDR | libiio (>= 0.23), libad9361-iio | [SoapyPlutoSDR](https://github.com/pothosware/SoapyPlutoSDR) (build from source) | `apt install` on Linux; build both libs from source on macOS |
 | bladeRF 2.0 | libbladerf | [SoapyBladeRF](https://github.com/pothosware/SoapyBladeRF) (build from source) | bladeRF firmware >= 2.6.0 required for FPGA v0.16.0 |
 
 ---
@@ -236,35 +236,53 @@ brew install gnuradio libusb cmake
 This installs GNU Radio 3.10+ with gr-soapy (the unified SDR backend) and
 SoapySDR.  Both are linked to the Homebrew Python (currently 3.14).
 
-**For PlutoSDR**, build libiio and SoapyPlutoSDR from source (neither is
-available as a Homebrew formula):
+**For PlutoSDR**, build libiio, libad9361-iio, and SoapyPlutoSDR from source
+(none are available as Homebrew formulae):
 
 ```shell
 # 1. Build libiio from source
-git clone --depth 1 --branch v0.26 https://github.com/analogdevicesinc/libiio.git
+#    -DOSX_FRAMEWORK=OFF is critical — without it cmake produces a .framework
+#    bundle that requires root to install and causes rpath issues downstream.
+git clone --depth 1 --branch v0.25 https://github.com/analogdevicesinc/libiio.git
 cd libiio && mkdir build && cd build
 cmake .. -DCMAKE_INSTALL_PREFIX=/opt/homebrew \
-         -DWITH_TESTS=OFF -DOSX_PACKAGE=OFF -DOSX_FRAMEWORK=OFF
+         -DWITH_TESTS=OFF -DWITH_SERIAL_BACKEND=OFF \
+         -DOSX_PACKAGE=OFF -DOSX_FRAMEWORK=OFF
 make -j$(sysctl -n hw.ncpu) && make install
 cd ../..
 
-# 2. Build SoapyPlutoSDR module
+# 2. Build libad9361-iio (AD9361 transceiver support library)
+#    Same -DOSX_FRAMEWORK=OFF requirement as libiio.
+git clone --depth 1 https://github.com/analogdevicesinc/libad9361-iio.git
+cd libad9361-iio && mkdir build && cd build
+cmake .. -DCMAKE_INSTALL_PREFIX=/opt/homebrew \
+         -DOSX_PACKAGE=OFF -DOSX_FRAMEWORK=OFF
+make -j$(sysctl -n hw.ncpu) && make install
+cd ../..
+
+# 3. Build SoapyPlutoSDR module
 git clone --depth 1 https://github.com/pothosware/SoapyPlutoSDR.git
 cd SoapyPlutoSDR && mkdir build && cd build
 cmake .. -DCMAKE_INSTALL_PREFIX=/opt/homebrew
 make -j$(sysctl -n hw.ncpu) && make install
 cd ../..
 
-# 3. Fix dynamic library paths (macOS rpath issue)
-install_name_tool -change \
-  "@rpath/iio.framework/Versions/0.25/iio" \
-  "@rpath/libiio.0.dylib" \
-  /opt/homebrew/lib/SoapySDR/modules0.8/libPlutoSDRSupport.so
-install_name_tool -add_rpath /opt/homebrew/lib \
-  /opt/homebrew/lib/SoapySDR/modules0.8/libPlutoSDRSupport.so
+# 4. Fix dynamic library paths (macOS rpath issue)
+#    Even with -DOSX_FRAMEWORK=OFF, the built binaries sometimes end up with
+#    framework-style references (@rpath/iio.framework/...) instead of dylib
+#    references.  These install_name_tool commands patch them to use the
+#    correct dylib names and add /opt/homebrew/lib to the rpath search.
+for lib in \
+  /opt/homebrew/lib/libad9361.0.2.dylib \
+  /opt/homebrew/lib/SoapySDR/modules0.8/libPlutoSDRSupport.so; do
+  install_name_tool -change \
+    "@rpath/iio.framework/Versions/0.25/iio" \
+    "@rpath/libiio.0.dylib" "$lib" 2>/dev/null
+  install_name_tool -add_rpath /opt/homebrew/lib "$lib" 2>/dev/null
+done
 
-# 4. Clean up source trees
-rm -rf libiio SoapyPlutoSDR
+# 5. Clean up source trees
+rm -rf libiio libad9361-iio SoapyPlutoSDR
 
 # Verify:
 SoapySDRUtil --find="driver=plutosdr"
@@ -365,10 +383,10 @@ sudo apt install -y libsoapysdr-dev python3-soapysdr
 sudo apt install -y cmake g++
 ```
 
-**PlutoSDR support** (libiio is available as a system package on Linux):
+**PlutoSDR support** (libiio and libad9361 are available as system packages on Linux):
 
 ```shell
-sudo apt install -y libiio-dev libiio-utils
+sudo apt install -y libiio-dev libiio-utils libad9361-dev
 
 git clone --depth 1 https://github.com/pothosware/SoapyPlutoSDR.git
 cd SoapyPlutoSDR && mkdir build && cd build
@@ -672,6 +690,40 @@ iio_info -s
 
 # Should return device details (not an error):
 iio_info -u ip:192.168.2.1
+```
+
+### `ModuleNotFoundError: No module named 'gnuradio'` (macOS / Linux native)
+
+GNU Radio's Python bindings are installed system-wide by the package manager
+(Homebrew or apt), not via pip.  If your venv was created **without**
+`--system-site-packages`, it cannot see them.
+
+**Option A — Recreate the venv** (cleanest):
+
+```shell
+rm -rf .venv
+python3 -m venv --system-site-packages .venv
+source .venv/bin/activate
+pip install -e .
+```
+
+**Option B — Add a `.pth` file** (if you want to keep your existing venv):
+
+```shell
+# macOS (Homebrew)
+echo "$(brew --prefix gnuradio)/lib/python3.14/site-packages" \
+  > .venv/lib/python3.14/site-packages/gnuradio-brew.pth
+
+# Linux (apt)
+echo "/usr/lib/python3/dist-packages" \
+  > .venv/lib/python3.*/site-packages/gnuradio-apt.pth
+```
+
+Verify with:
+
+```shell
+source .venv/bin/activate
+python3 -c "from gnuradio import gr, soapy; print('OK')"
 ```
 
 ### USB permissions on Linux

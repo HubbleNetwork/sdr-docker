@@ -10,7 +10,9 @@ import threading
 from collections import deque
 
 import numpy as np
-from flask import Flask, Response, jsonify, render_template, request as flask_request
+import io
+
+from flask import Flask, Response, jsonify, render_template, request as flask_request, send_file
 
 from . import config
 from .decoder import get_chipset_stats, reset_chipset_stats
@@ -49,13 +51,19 @@ class SharedState:
 
         # Time-domain plot state
         self.td_target_ntw_id: int | None = None
+        self.td_target_chipset: str | None = None
         self.td_running = False
         self.td_latest_img: bytes = b""
         self.td_status: str = ""
+        self.td_decode_info: dict | None = None
+        self.td_iq_segment: np.ndarray | None = None
 
         # AGC state
         self.rx_gain_dB: float = config.RX_INITIAL_GAIN_DB
         self.rx_peak_frac: float = 0.0
+
+        # LO frequency (mutable at runtime in 1 kHz steps)
+        self.lo_freq_hz: int = config.CENTER_FREQ_HZ
 
 
 state = SharedState()
@@ -105,6 +113,8 @@ def api_status():
             d["max_energy_dB"] = r["energy_dB"]
             d["seq_nums"].append(r["seq_num"])
             d["last_seen"] = r["timestamp"]
+            if r.get("freq_delta_hz") is not None:
+                d["freq_delta_hz"] = r["freq_delta_hz"]
 
         for d in devices.values():
             seen = set()
@@ -114,13 +124,14 @@ def api_status():
                     seen.add(s)
                     unique_seqs.append(s)
             d["seq_nums"] = unique_seqs[-10:]
+            d.setdefault("freq_delta_hz", None)
 
         dev_list = sorted(devices.values(), key=lambda x: x["ntw_id"])
         stats = dict(state.decode_stats)
         stats["n_unique_devices"] = len(dev_list)
 
         td_b64 = ""
-        if state.td_running and state.td_latest_img:
+        if state.td_latest_img:
             td_b64 = base64.b64encode(state.td_latest_img).decode("ascii")
 
         cs_stats = get_chipset_stats()
@@ -128,8 +139,13 @@ def api_status():
         return jsonify(
             devices=dev_list, stats=stats,
             td_img=td_b64, td_running=state.td_running,
-            td_device_id=state.td_target_ntw_id, td_status=state.td_status,
+            td_device_id=state.td_target_ntw_id,
+            td_chipset=state.td_target_chipset,
+            td_status=state.td_status,
+            td_decode_info=state.td_decode_info,
             chipset_stats=cs_stats,
+            known_chipsets=sorted(config.SYNTH_RES.keys()),
+            lo_freq_hz=state.lo_freq_hz,
         )
 
 
@@ -156,16 +172,31 @@ def api_gain():
     return jsonify(gain=new_gain)
 
 
+@app.route("/api/lo", methods=["POST"])
+def api_lo():
+    data = flask_request.get_json(silent=True) or {}
+    delta = data.get("delta_khz", 0)
+    new_freq = state.lo_freq_hz + int(delta) * 1000
+    state.lo_freq_hz = new_freq
+    return jsonify(lo_freq_hz=new_freq)
+
+
 @app.route("/api/timedomain", methods=["GET", "POST"])
 def api_timedomain():
     if flask_request.method == "POST":
         data = flask_request.get_json(silent=True) or {}
         action = data.get("action")
         if action == "start":
+            chipset = data.get("chipset")
             dev_id = data.get("device_id")
-            if dev_id is not None:
+            if chipset:
+                state.td_target_chipset = chipset
+                state.td_target_ntw_id = None
+                state.td_running = True
+            elif dev_id is not None:
                 try:
                     state.td_target_ntw_id = int(dev_id)
+                    state.td_target_chipset = None
                     state.td_running = True
                 except (ValueError, TypeError):
                     return jsonify(error="Invalid device_id"), 400
@@ -173,7 +204,36 @@ def api_timedomain():
             state.td_running = False
     with state.lock:
         status = state.td_status
-    return jsonify(running=state.td_running, device_id=state.td_target_ntw_id, status=status)
+    return jsonify(
+        running=state.td_running, device_id=state.td_target_ntw_id,
+        chipset=state.td_target_chipset, status=status,
+    )
+
+
+@app.route("/api/td_iq", methods=["GET"])
+def api_td_iq():
+    """Download the current TD IQ capture as a .npy file."""
+    with state.lock:
+        seg = state.td_iq_segment
+    if seg is None:
+        return jsonify(error="No IQ capture available"), 404
+    buf = io.BytesIO()
+    np.save(buf, seg)
+    buf.seek(0)
+    return send_file(
+        buf, mimetype="application/octet-stream",
+        as_attachment=True, download_name="td_capture.npy",
+    )
+
+
+@app.route("/api/td_info", methods=["GET"])
+def api_td_info():
+    """Return just the decode_info for the current TD capture."""
+    with state.lock:
+        info = state.td_decode_info
+    if info is None:
+        return jsonify(error="No capture available"), 404
+    return jsonify(info)
 
 
 # ===========================================================================

@@ -56,11 +56,12 @@ setup(
     #                      • macOS: brew install cmake (g++ via Xcode CLT)
     #
     # PER-SDR (install the one(s) you need):
-    #   SoapyPlutoSDR      PlutoSDR support (requires libiio)
+    #   SoapyPlutoSDR      PlutoSDR support (requires libiio + libad9361-iio)
     #                      • Build from source: github.com/pothosware/SoapyPlutoSDR
-    #                      • macOS: libiio must also be built from source (not in
-    #                        Homebrew); see README for full instructions
-    #                      • Linux: apt install libiio-dev libiio-utils,
+    #                      • macOS: libiio and libad9361-iio must also be built from
+    #                        source (not in Homebrew); the built dylibs need
+    #                        install_name_tool rpath fixes — see README
+    #                      • Linux: apt install libiio-dev libiio-utils libad9361-dev,
     #                        then build SoapyPlutoSDR
     #
     #   SoapyBladeRF       bladeRF 2.0 Micro A4 support (requires libbladerf)

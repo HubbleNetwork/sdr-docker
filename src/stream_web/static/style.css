@@ -84,8 +84,8 @@ tbody tr:hover { background: rgba(127,219,202,0.06); }
   padding: 8px 20px;
   border: none;
   cursor: pointer;
-  font-weight: bold;
-  font-size: 0.9em;
+  font-weight: 600;
+  font-size: 0.85em;
   font-family: 'Segoe UI', system-ui, sans-serif;
   background: #111827;
   color: #666;
@@ -115,48 +115,105 @@ tbody tr:hover { background: rgba(127,219,202,0.06); }
   padding: 20px;
 }
 
-/* -- Buttons --------------------------------------------------------------- */
+/* -- Unified button base -------------------------------------------------- */
 
-.btn-bar {
-  display: flex;
-  gap: 8px;
-  margin: 6px 0 10px;
-}
-#reset-btn {
-  padding: 6px 18px;
-  border: none;
+.btn {
+  display: inline-block;
+  padding: 5px 14px;
+  border: 1px solid #333;
   border-radius: 4px;
   cursor: pointer;
-  font-weight: bold;
-  font-size: 0.95em;
-  background: #4b5563;
-  color: #d1d5db;
-  transition: all 0.2s;
-}
-#reset-btn:hover { background: #6b7280; color: #fff; }
-
-.gain-btn {
-  padding: 6px 14px;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-weight: bold;
-  font-size: 0.95em;
-  background: #1e3a5f;
-  color: #93c5fd;
-  transition: all 0.2s;
-}
-.gain-btn:hover { background: #2563eb; color: #fff; }
-
-.gain-label {
-  color: #93c5fd;
-  font-weight: bold;
-  font-size: 0.9em;
+  font-weight: 600;
+  font-size: 0.82em;
   font-family: 'Fira Mono', monospace;
-  align-self: center;
+  background: #1e293b;
+  color: #94a3b8;
+  text-decoration: none;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  line-height: 1.4;
+  vertical-align: middle;
+}
+.btn:hover {
+  background: #334155;
+  color: #e2e8f0;
 }
 
-/* -- Time-domain panel ----------------------------------------------------- */
+.btn-go {
+  background: #065f46;
+  color: #6ee7b7;
+  border-color: #065f46;
+}
+.btn-go:hover {
+  background: #047857;
+  color: #a7f3d0;
+}
+
+.btn-stop {
+  background: #991b1b;
+  color: #fca5a5;
+  border-color: #991b1b;
+}
+.btn-stop:hover {
+  background: #b91c1c;
+  color: #fecaca;
+}
+
+.btn-link {
+  color: #38bdf8;
+  border-color: #334155;
+}
+.btn-link:hover {
+  color: #7dd3fc;
+}
+
+.btn-chip {
+  font-size: 0.82em;
+}
+.btn-chip.off {
+  background: #1e293b;
+  color: #64748b;
+}
+.btn-chip.off:hover {
+  background: #334155;
+  color: #94a3b8;
+}
+.btn-chip.on {
+  background: #065f46;
+  color: #6ee7b7;
+  border-color: #6ee7b7;
+}
+
+/* -- Toolbar -------------------------------------------------------------- */
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 10px;
+  flex-wrap: wrap;
+}
+.toolbar-label {
+  color: #93c5fd;
+  font-weight: 600;
+  font-size: 0.82em;
+  font-family: 'Fira Mono', monospace;
+}
+.toolbar-value {
+  color: #7fdbca;
+  font-weight: 600;
+  font-size: 0.82em;
+  font-family: 'Fira Mono', monospace;
+  min-width: 120px;
+  text-align: center;
+}
+.toolbar-sep {
+  width: 1px;
+  height: 20px;
+  background: #333;
+  margin: 0 4px;
+}
+
+/* -- Signal Viewer panel -------------------------------------------------- */
 
 #td-panel {
   background: #1a1a2e;
@@ -180,24 +237,32 @@ tbody tr:hover { background: rgba(127,219,202,0.06); }
   color: #7fdbca;
   border: 1px solid #333;
   border-radius: 4px;
-  padding: 6px 10px;
+  padding: 5px 10px;
   font-family: 'Fira Mono', monospace;
-  font-size: 0.95em;
+  font-size: 0.82em;
   width: 200px;
 }
 #td-dev-input::placeholder { color: #555; }
 
-#td-btn {
-  padding: 6px 18px;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-weight: bold;
-  font-size: 0.95em;
-  transition: all 0.2s;
+#td-chipset-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
 }
-#td-btn.off { background: #065f46; color: #6ee7b7; }
-#td-btn.on  { background: #dc2626; color: #fff; }
+
+#td-action-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+#td-status-line {
+  font-family: 'Fira Mono', monospace;
+  font-size: 0.82em;
+  color: #94a3b8;
+}
 
 #td-img {
   width: 100%;
@@ -206,4 +271,26 @@ tbody tr:hover { background: rgba(127,219,202,0.06); }
   min-height: 60px;
   background: #0f0f23;
   display: none;
+}
+
+#td-capture-bar {
+  display: none;
+  gap: 8px;
+  margin-top: 8px;
+  align-items: center;
+}
+
+#td-detail {
+  display: none;
+  background: #0f0f23;
+  border: 1px solid #333;
+  border-radius: 4px;
+  padding: 10px 14px;
+  margin-top: 8px;
+  font-family: 'Fira Mono', monospace;
+  font-size: 0.82em;
+  color: #94a3b8;
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre;
 }

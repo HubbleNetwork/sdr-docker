@@ -16,11 +16,17 @@
     &nbsp;|&nbsp; Gain: <span id="gn">&mdash;</span> dB (<span id="pk">&mdash;</span>%)
     &nbsp;|&nbsp; Status: <span id="rt" class="ok">&mdash;</span>
   </div>
-  <div class="btn-bar">
-    <button id="reset-btn" onclick="resetDetections()">RESET</button>
-    <span class="gain-label">Gain:</span>
-    <button class="gain-btn" onclick="adjustGain(-1)">&#x25BC;</button>
-    <button class="gain-btn" onclick="adjustGain(1)">&#x25B2;</button>
+  <div class="toolbar">
+    <button class="btn" onclick="resetDetections()">Reset</button>
+    <span class="toolbar-sep"></span>
+    <span class="toolbar-label">Gain:</span>
+    <button class="btn" onclick="adjustGain(-1)">&#x25BC;</button>
+    <button class="btn" onclick="adjustGain(1)">&#x25B2;</button>
+    <span class="toolbar-sep"></span>
+    <span class="toolbar-label">LO:</span>
+    <button class="btn" onclick="adjustLo(-1)">&#x25BC;</button>
+    <span id="lo-display" class="toolbar-value">--</span>
+    <button class="btn" onclick="adjustLo(1)">&#x25B2;</button>
   </div>
   <div class="tab-bar">
     <button class="tab-btn active" onclick="switchTab('decodes')">Decodes</button>
@@ -34,12 +40,13 @@
           <th>Device ID</th>
           <th>Chipset</th>
           <th>Last RSSI (dBFS)</th>
+          <th>&Delta;f (Hz)</th>
           <th>Last 10 Seq Numbers</th>
           <th>Last Seen</th>
         </tr>
       </thead>
       <tbody id="dev-body">
-        <tr><td colspan="6" class="no-data">Waiting for detections&hellip;</td></tr>
+        <tr><td colspan="7" class="no-data">Waiting for detections&hellip;</td></tr>
       </tbody>
     </table>
   </div>
@@ -62,12 +69,25 @@
     </table>
   </div>
   <div id="td-panel">
-    <h2>Time-Domain Signal Viewer</h2>
+    <h2>Signal Viewer</h2>
     <div id="td-controls">
+      <span class="toolbar-label">By Device ID:</span>
       <input id="td-dev-input" type="text" placeholder="Device ID (decimal)" />
-      <button id="td-btn" class="off" onclick="toggleTd()">Start</button>
+    </div>
+    <div id="td-chipset-controls">
+      <span class="toolbar-label">By Chipset:</span>
+      <span id="td-chipset-btns"></span>
+    </div>
+    <div id="td-action-bar">
+      <button id="td-btn" class="btn btn-go" onclick="toggleTd()">Start</button>
+      <span id="td-status-line"></span>
     </div>
     <img id="td-img" src="" alt="" style="display:none" />
+    <div id="td-capture-bar" style="display:none">
+      <a id="td-dl-iq" href="/api/td_iq" class="btn btn-link" download>Download IQ (.npy)</a>
+      <a id="td-dl-info" href="/api/td_info" class="btn btn-link" target="_blank">View Full Decode Info (JSON)</a>
+    </div>
+    <pre id="td-detail"></pre>
   </div>
 
   <script>
@@ -92,10 +112,16 @@
     var gnEl = document.getElementById('gn');
     var pkEl = document.getElementById('pk');
     var tbody = document.getElementById('dev-body');
-    var tdBtnEl   = document.getElementById('td-btn');
-    var tdInputEl = document.getElementById('td-dev-input');
-    var tdImgEl   = document.getElementById('td-img');
-    var tdActive  = false;
+    var tdBtnEl     = document.getElementById('td-btn');
+    var tdInputEl   = document.getElementById('td-dev-input');
+    var tdImgEl     = document.getElementById('td-img');
+    var tdStatusEl  = document.getElementById('td-status-line');
+    var tdChipBtns  = document.getElementById('td-chipset-btns');
+    var tdDetailEl  = document.getElementById('td-detail');
+    var loDisplay   = document.getElementById('lo-display');
+    var tdMode      = null;
+    var tdChipset   = null;
+    var chipBtnsRendered = false;
 
     function refreshImg() {
       var i = new Image();
@@ -135,6 +161,10 @@
           rtEl.className = 'warn';
         }
 
+        if (d.lo_freq_hz) {
+          loDisplay.textContent = (d.lo_freq_hz / 1e9).toFixed(6) + ' GHz';
+        }
+
         if (!skipTables && d.devices && d.devices.length > 0) {
           var html = '';
           for (var i = 0; i < d.devices.length; i++) {
@@ -143,11 +173,15 @@
             var phyCls = dev.phy_ver === -1 ? 'c-phy c-phy-neg1' : 'c-phy c-phy-v1';
             var phyLabel = dev.phy_ver === -1 ? 'v-1' : 'v1';
             var chipset = dev.chipset || '\u2014';
+            var dfVal = dev.freq_delta_hz != null
+              ? dev.freq_delta_hz.toFixed(0)
+              : '\u2014';
             html += '<tr>'
               + '<td class="' + phyCls + '">' + phyLabel + '</td>'
               + '<td class="c-id">' + dev.ntw_id_hex + '<br><small>' + dev.ntw_id + '</small></td>'
               + '<td class="c-chip">' + chipset + '</td>'
               + '<td class="c-nrg">' + dev.max_energy_dB.toFixed(1) + '</td>'
+              + '<td class="c-df">' + dfVal + '</td>'
               + '<td class="c-seq">' + seqs + '</td>'
               + '<td class="c-ts">' + dev.last_seen + '</td>'
               + '</tr>';
@@ -178,9 +212,49 @@
           }
         }
 
+        if (!chipBtnsRendered && d.known_chipsets && d.known_chipsets.length) {
+          var bh = '';
+          for (var k = 0; k < d.known_chipsets.length; k++) {
+            var cn = d.known_chipsets[k];
+            bh += '<button class="btn btn-chip off" '
+              + 'data-chipset="' + cn + '" '
+              + 'onclick="toggleTdChipset(\'' + cn + '\')">'
+              + cn + '</button> ';
+          }
+          tdChipBtns.innerHTML = bh;
+          chipBtnsRendered = true;
+        }
+
         if (d.td_img) {
           tdImgEl.src = 'data:image/png;base64,' + d.td_img;
           tdImgEl.style.display = 'block';
+        }
+        if (d.td_status) {
+          tdStatusEl.textContent = d.td_status;
+          tdStatusEl.style.display = 'block';
+        }
+        var capBar = document.getElementById('td-capture-bar');
+        if (d.td_decode_info) {
+          var di = d.td_decode_info;
+          var keys = ['decoded','reason','chipset','energy_dB','F31_snr',
+            'measured_synth_res','synth_res_val','F0_hz',
+            'header_syms','header_n_corr','channel_num','hop_seq_idx',
+            'pkt_len_idx','num_pdu_symbols',
+            'n_clamped','total_data_syms','pdu_syms_head',
+            'seq_num','ntw_id','score','time_s','phy_ver','start_sample'];
+          var lines = [];
+          for (var m = 0; m < keys.length; m++) {
+            if (di[keys[m]] !== undefined && di[keys[m]] !== null) {
+              var v = di[keys[m]];
+              if (keys[m] === 'ntw_id') v = '0x' + v.toString(16).toUpperCase().padStart(8,'0');
+              else if (typeof v === 'number' && v % 1 !== 0) v = v.toFixed(4);
+              else if (Array.isArray(v)) v = '[' + v.join(', ') + ']';
+              lines.push(keys[m].padEnd(22) + v);
+            }
+          }
+          tdDetailEl.textContent = lines.join('\n');
+          tdDetailEl.style.display = 'block';
+          capBar.style.display = 'flex';
         }
       }).catch(function() {});
       setTimeout(refreshData, 500);
@@ -189,7 +263,7 @@
 
     function resetDetections() {
       fetch('/api/reset', { method: 'POST' }).then(function() {
-        tbody.innerHTML = '<tr><td colspan="6" class="no-data">Cleared.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" class="no-data">Cleared.</td></tr>';
         document.getElementById('cs-body').innerHTML =
           '<tr><td colspan="7" class="no-data">Cleared.</td></tr>';
       });
@@ -203,29 +277,75 @@
       });
     }
 
+    function adjustLo(deltaKhz) {
+      fetch('/api/lo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ delta_khz: deltaKhz })
+      }).then(function(r) { return r.json(); }).then(function(d) {
+        if (d.lo_freq_hz) {
+          loDisplay.textContent = (d.lo_freq_hz / 1e9).toFixed(6) + ' GHz';
+        }
+      });
+    }
+
+    function tdPost(body) {
+      return fetch('/api/timedomain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      }).then(function(r) { return r.json(); });
+    }
+
+    function syncBtnUI() {
+      if (tdMode) {
+        tdBtnEl.textContent = 'Stop';
+        tdBtnEl.className = 'btn btn-stop';
+      } else {
+        tdBtnEl.textContent = 'Start';
+        tdBtnEl.className = 'btn btn-go';
+      }
+      tdChipBtns.querySelectorAll('button').forEach(function(btn) {
+        if (tdMode === 'chipset' && btn.dataset.chipset === tdChipset) {
+          btn.className = 'btn btn-chip on';
+        } else {
+          btn.className = 'btn btn-chip off';
+        }
+      });
+    }
+
+    function stopTd() {
+      tdPost({ action: 'stop' }).then(function() {
+        tdMode = null;
+        tdChipset = null;
+        syncBtnUI();
+      });
+    }
+
     function toggleTd() {
-      if (tdActive) {
-        fetch('/api/timedomain', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'stop' })
-        }).then(function(r) { return r.json(); }).then(function() {
-          tdActive = false;
-          tdBtnEl.textContent = 'Start';
-          tdBtnEl.className = 'off';
-        });
+      if (tdMode) {
+        stopTd();
       } else {
         var devId = tdInputEl.value.trim();
         if (!devId) return;
-        fetch('/api/timedomain', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'start', device_id: devId })
-        }).then(function(r) { return r.json(); }).then(function(d) {
+        tdPost({ action: 'start', device_id: devId }).then(function(d) {
           if (d.error) return;
-          tdActive = true;
-          tdBtnEl.textContent = 'Stop';
-          tdBtnEl.className = 'on';
+          tdMode = 'device';
+          tdChipset = null;
+          syncBtnUI();
+        });
+      }
+    }
+
+    function toggleTdChipset(name) {
+      if (tdMode === 'chipset' && tdChipset === name) {
+        stopTd();
+      } else {
+        tdPost({ action: 'start', chipset: name }).then(function(d) {
+          if (d.error) return;
+          tdMode = 'chipset';
+          tdChipset = name;
+          syncBtnUI();
         });
       }
     }

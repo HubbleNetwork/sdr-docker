@@ -104,8 +104,8 @@ def render_spec_image(chunks: list[np.ndarray], detections: list[dict] | None = 
 # Time-domain plot rendering
 # ===========================================================================
 
-def render_td_plot(iq_segment: np.ndarray) -> bytes:
-    """Render a time-domain magnitude plot with symbol/gap duration annotations."""
+def render_td_plot(iq_segment: np.ndarray, decode_info: dict | None = None) -> bytes:
+    """Render a time-domain magnitude plot + spectrogram with annotations."""
     n = len(iq_segment)
     t_ms = np.arange(n) / config.SAMPLE_RATE * 1e3
     mag = np.abs(iq_segment)
@@ -131,7 +131,6 @@ def render_td_plot(iq_segment: np.ndarray) -> bytes:
     mask = (ends - starts) >= min_sym
     starts, ends = starts[mask], ends[mask]
 
-    # Merge ON intervals separated by gaps shorter than 0.1 ms
     min_gap = int(0.1e-3 * config.SAMPLE_RATE)
     m_starts, m_ends = [], []
     for s, e in zip(starts, ends):
@@ -147,18 +146,20 @@ def render_td_plot(iq_segment: np.ndarray) -> bytes:
     gap_ends = starts[1:]
     gap_dur_ms = (gap_ends - gap_starts) / config.SAMPLE_RATE * 1e3
 
-    # -- Plotting ----------------------------------------------------------
-    fig = Figure(figsize=(12, 4.5), dpi=100, facecolor="#0f0f23")
+    # -- Plotting (2 subplots: time domain + spectrogram) ------------------
+    fig = Figure(figsize=(12, 7), dpi=100, facecolor="#0f0f23")
     canvas = FigureCanvasAgg(fig)
-    ax = fig.add_subplot(111)
-    ax.set_facecolor("#1a1a2e")
-    ax.plot(t_ms, mag_dbfs, color="#7fdbca", linewidth=0.4, alpha=0.7)
+    ax_td = fig.add_subplot(2, 1, 1)
+    ax_sg = fig.add_subplot(2, 1, 2, sharex=ax_td)
+
+    # --- Top: time-domain magnitude ---
+    ax_td.set_facecolor("#1a1a2e")
+    ax_td.plot(t_ms, mag_dbfs, color="#7fdbca", linewidth=0.4, alpha=0.7)
 
     sig_peak_dbfs = np.max(mag_dbfs) if len(mag_dbfs) else -10.0
     y_floor = max(DBFS_FLOOR, sig_peak_dbfs - 60)
-    ax.set_ylim(y_floor, 0)
+    ax_td.set_ylim(y_floor, 0)
 
-    # Peak frequency per symbol via FFT
     sym_freqs = []
     for s, e in zip(starts, ends):
         sym_iq = iq_segment[s:e]
@@ -171,31 +172,33 @@ def render_td_plot(iq_segment: np.ndarray) -> bytes:
             psd[-dc_zone:] = 0
         pk = np.argmax(psd)
         sym_freqs.append(freqs[pk])
-    f0 = sym_freqs[0] if sym_freqs else 0.0
+    f0 = sym_freqs[1] if len(sym_freqs) > 1 else (sym_freqs[0] if sym_freqs else 0.0)
 
-    # Symbol shading + delta-f labels
     for i, (s, e) in enumerate(zip(starts, ends)):
         t0 = s / config.SAMPLE_RATE * 1e3
         t1 = e / config.SAMPLE_RATE * 1e3
-        ax.axvspan(t0, t1, alpha=0.08, color="#22d3ee")
-        ax.axvline(t0, color="#22d3ee", linewidth=0.5, alpha=0.4)
-        ax.axvline(t1, color="#22d3ee", linewidth=0.5, alpha=0.4)
+        ax_td.axvspan(t0, t1, alpha=0.08, color="#22d3ee")
+        ax_td.axvline(t0, color="#22d3ee", linewidth=0.5, alpha=0.4)
+        ax_td.axvline(t1, color="#22d3ee", linewidth=0.5, alpha=0.4)
         df = sym_freqs[i] - f0
-        lbl = f"F0={sym_freqs[i]:.0f}" if i == 0 else f"{df:+.0f}"
+        if i == 0:
+            lbl = f"F31={sym_freqs[i]:.0f}"
+        elif i == 1:
+            lbl = f"F0={sym_freqs[i]:.0f}"
+        else:
+            lbl = f"{df:+.0f}"
         y_mid = (0 + y_floor) / 2
-        ax.text(
+        ax_td.text(
             (t0 + t1) / 2, y_mid, lbl,
             ha="center", va="center", fontsize=8, color="#e2e8f0",
             fontfamily="monospace", fontweight="bold", rotation=90,
         )
 
-    # Gap shading
     for i in range(len(gap_dur_ms)):
         t0 = gap_starts[i] / config.SAMPLE_RATE * 1e3
         t1 = gap_ends[i] / config.SAMPLE_RATE * 1e3
-        ax.axvspan(t0, t1, alpha=0.12, color="#f87171")
+        ax_td.axvspan(t0, t1, alpha=0.12, color="#f87171")
 
-    # Summary statistics box
     EXPECTED_PERIOD_MS = 8.8
     lines = []
     if len(sym_dur_ms):
@@ -221,21 +224,99 @@ def render_td_plot(iq_segment: np.ndarray) -> bytes:
             f"({drift_ms / n_periods * 1e3:+.1f} \u00b5s/period)"
         )
     if lines:
-        ax.text(
-            0.99, 0.97, "\n".join(lines), transform=ax.transAxes,
+        ax_td.text(
+            0.99, 0.97, "\n".join(lines), transform=ax_td.transAxes,
             fontsize=8, color="#7fdbca", fontfamily="monospace",
             va="top", ha="right",
             bbox=dict(boxstyle="round,pad=0.5", facecolor="#1a1a2e",
                       edgecolor="#333", alpha=0.92),
         )
 
-    ax.set_xlabel("Time (ms)", color="#ccc")
-    ax.set_ylabel("ABS (dBFS)", color="#ccc")
-    ax.tick_params(colors="#888")
-    for spine in ax.spines.values():
+    ax_td.set_ylabel("ABS (dBFS)", color="#ccc")
+    ax_td.tick_params(colors="#888", labelbottom=False)
+    for spine in ax_td.spines.values():
         spine.set_color("#333")
-    ax.grid(True, color="#333", linewidth=0.3, alpha=0.5)
-    ax.set_xlim(t_ms[0], t_ms[-1])
+    ax_td.grid(True, color="#333", linewidth=0.3, alpha=0.5)
+    ax_td.set_xlim(t_ms[0], t_ms[-1])
+
+    if decode_info:
+        di_lines = []
+        if decode_info.get("decoded"):
+            di_lines.append("DECODED OK")
+            if decode_info.get("seq_num") is not None:
+                di_lines.append(f"seq={decode_info['seq_num']}")
+            if decode_info.get("ntw_id") is not None:
+                di_lines.append(f"id=0x{decode_info['ntw_id']:08X}")
+        else:
+            di_lines.append(f"DECODE FAILED: {decode_info.get('reason', '?')}")
+
+        if decode_info.get("chipset"):
+            di_lines.append(f"chipset: {decode_info['chipset']}")
+        if decode_info.get("energy_dB") is not None:
+            di_lines.append(f"energy: {decode_info['energy_dB']:.1f} dBFS")
+
+        if decode_info.get("F31_snr") is not None:
+            di_lines.append(
+                f"SNR={decode_info['F31_snr']:.1f}  "
+                f"synth_res={decode_info.get('measured_synth_res', '?')} Hz"
+            )
+        if decode_info.get("F0_hz") is not None:
+            di_lines.append(f"F0={decode_info['F0_hz']:.0f} Hz")
+        if decode_info.get("header_syms") is not None:
+            di_lines.append(f"hdr_syms={decode_info['header_syms']}")
+        if decode_info.get("header_n_corr") is not None:
+            di_lines.append(
+                f"hdr_corr={decode_info['header_n_corr']}  "
+                f"ch={decode_info.get('channel_num', '?')}  "
+                f"hop={decode_info.get('hop_seq_idx', '?')}  "
+                f"pdu_len={decode_info.get('num_pdu_symbols', '?')}"
+            )
+        reason = decode_info.get("reason", "")
+        if reason == "clamped_fail" and decode_info.get("n_clamped") is not None:
+            di_lines.append(
+                f"clamped: {decode_info['n_clamped']}/{decode_info.get('total_data_syms', '?')}"
+            )
+        if reason == "pdu_fail" and decode_info.get("pdu_syms_head") is not None:
+            di_lines.append(f"pdu[0:10]={decode_info['pdu_syms_head']}")
+
+        di_color = "#22d3ee" if decode_info.get("decoded") else "#f87171"
+        ax_td.text(
+            0.01, 0.97, "\n".join(di_lines), transform=ax_td.transAxes,
+            fontsize=8, color=di_color, fontfamily="monospace",
+            va="top", ha="left",
+            bbox=dict(boxstyle="round,pad=0.5", facecolor="#1a1a2e",
+                      edgecolor=di_color, alpha=0.92),
+        )
+
+    # --- Bottom: spectrogram ---
+    ax_sg.set_facecolor("#1a1a2e")
+    nperseg_td = min(256, n // 4) if n > 256 else max(16, n // 2)
+    noverlap_td = nperseg_td * 3 // 4
+    f_sg, t_sg, Sxx = scipy_spectrogram(
+        iq_segment, fs=config.SAMPLE_RATE,
+        nperseg=nperseg_td, noverlap=noverlap_td, return_onesided=False,
+    )
+    f_sg = np.fft.fftshift(f_sg)
+    Sxx = np.fft.fftshift(Sxx, axes=0)
+    Sxx_dB = 10.0 * np.log10(Sxx + 1e-12)
+    t_sg_ms = t_sg * 1e3
+    f_sg_khz = f_sg / 1e3
+
+    plow, phigh = np.percentile(Sxx_dB, [2, 99.5])
+    if phigh <= plow:
+        phigh = plow + 1.0
+
+    ax_sg.pcolormesh(
+        t_sg_ms, f_sg_khz, Sxx_dB,
+        vmin=plow, vmax=phigh, cmap="viridis", shading="auto",
+    )
+    ax_sg.set_xlabel("Time (ms)", color="#ccc")
+    ax_sg.set_ylabel("Freq (kHz)", color="#ccc")
+    ax_sg.tick_params(colors="#888")
+    for spine in ax_sg.spines.values():
+        spine.set_color("#333")
+    ax_sg.set_xlim(t_ms[0], t_ms[-1])
+
     fig.tight_layout(pad=0.5)
 
     buf = io.BytesIO()

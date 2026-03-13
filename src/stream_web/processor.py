@@ -42,10 +42,10 @@ def process_loop(state):
         t_dec0 = time.perf_counter()
         decode_chunk = ordered[-config.DECODE_SAMPLES:]
         try:
-            packets, detections = decode_signal(decode_chunk)
+            packets, detections, attempts = decode_signal(decode_chunk)
         except Exception as e:
             print(f"[PROC] Decode error: {e}")
-            packets, detections = [], []
+            packets, detections, attempts = [], [], []
         t_dec_ms = (time.perf_counter() - t_dec0) * 1000
 
         # 3) Update persistent detection history
@@ -101,6 +101,7 @@ def process_loop(state):
                     "seq_num": pkt["seq_num"],
                     "energy_dB": round(pkt["total_energy_dB"], 1),
                     "chipset": pkt.get("chipset", ""),
+                    "freq_delta_hz": pkt.get("freq_delta_hz"),
                 })
             state.decode_results[:] = state.decode_results[-config.MAX_DECODE_HISTORY:]
             state.decode_stats = {
@@ -114,34 +115,76 @@ def process_loop(state):
                 "rx_peak_pct": round(state.rx_peak_frac * 100, 1),
             }
 
-        # 5) Time-domain plot for tracked device
-        if state.td_running and state.td_target_ntw_id is not None:
-            pkt_ids = [p["ntw_id"] for p in packets]
-            td_match = [p for p in packets if p["ntw_id"] == state.td_target_ntw_id]
-            if td_match:
-                pkt = td_match[0]
+        # 5) Time-domain plot for tracked device or chipset
+        if state.td_running:
+            td_hit = None
+
+            if state.td_target_chipset:
+                matches = [a for a in attempts
+                           if a.get("chipset") == state.td_target_chipset]
+                if matches:
+                    td_hit = matches[0]
+            elif state.td_target_ntw_id is not None:
+                matches = [p for p in packets
+                           if p["ntw_id"] == state.td_target_ntw_id]
+                if matches:
+                    td_hit = matches[0]
+                    td_hit.setdefault("decoded", True)
+                    td_hit.setdefault("reason", "ok")
+                    td_hit.setdefault(
+                        "start_sample",
+                        int(round(matches[0]["time_s"] * config.SAMPLE_RATE)),
+                    )
+
+            if td_hit is not None:
                 td_samples = int(config.TD_WINDOW_S * config.SAMPLE_RATE)
-                td_center = int(round(pkt["time_s"] * config.SAMPLE_RATE))
-                td_start = max(0, td_center - td_samples // 4)
+                td_center = td_hit.get(
+                    "start_sample",
+                    int(round(td_hit["time_s"] * config.SAMPLE_RATE)),
+                )
+                td_start = max(0, td_center - td_samples // 10)
                 td_end = min(td_start + td_samples, len(decode_chunk))
                 if td_start < td_end:
                     td_seg = decode_chunk[td_start:td_end]
+                    decode_info = dict(td_hit)
+                    decode_info.setdefault("decoded", False)
+                    decode_info.setdefault("reason", "unknown")
+                    if not decode_info.get("energy_dB"):
+                        decode_info["energy_dB"] = td_hit.get("total_energy_dB")
                     try:
-                        td_img = render_td_plot(td_seg)
+                        td_img = render_td_plot(td_seg, decode_info=decode_info)
+                        status = f"t={td_hit['time_s']:.3f}s"
+                        if decode_info["decoded"]:
+                            seq = decode_info.get("seq_num")
+                            status += f" | DECODED seq={seq}"
+                        else:
+                            status += f" | FAILED: {decode_info['reason']}"
+                        serializable = {
+                            k: v for k, v in decode_info.items()
+                            if isinstance(v, (str, int, float, bool, list, type(None)))
+                        }
                         with state.lock:
                             state.td_latest_img = td_img
-                            state.td_status = (
-                                f"Updated -- t={pkt['time_s']:.3f}s, {len(td_seg):,} samples"
-                            )
+                            state.td_status = status
+                            state.td_decode_info = serializable
+                            state.td_iq_segment = td_seg.copy()
                     except Exception as e:
                         print(f"[TD] Plot error: {e}")
                         with state.lock:
                             state.td_status = f"Render error: {e}"
             else:
                 with state.lock:
-                    state.td_status = (
-                        f"Searching... ({len(packets)} pkts this cycle, IDs: {pkt_ids[:5]})"
-                    )
+                    if state.td_target_chipset:
+                        state.td_status = (
+                            f"Searching for {state.td_target_chipset}... "
+                            f"({len(packets)} decoded this cycle)"
+                        )
+                    elif state.td_target_ntw_id is not None:
+                        pkt_ids = [p["ntw_id"] for p in packets]
+                        state.td_status = (
+                            f"Searching... ({len(packets)} pkts, "
+                            f"IDs: {pkt_ids[:5]})"
+                        )
 
         if config.VERBOSE:
             print(
