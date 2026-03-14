@@ -60,7 +60,6 @@
           <th>Decoded</th>
           <th>Header Fail</th>
           <th>PDU Fail</th>
-          <th>Clamped</th>
           <th>Rate</th>
         </tr>
       </thead>
@@ -208,7 +207,6 @@
                 + '<td class="c-id">' + s.ok + '</td>'
                 + '<td class="c-nrg">' + s.header_fail + '</td>'
                 + '<td class="c-nrg">' + s.pdu_fail + '</td>'
-                + '<td>' + s.clamped_fail + '</td>'
                 + '<td class="' + rCls + '">' + rate + '</td>'
                 + '</tr>';
             }
@@ -244,7 +242,7 @@
             'measured_synth_res','synth_res_val','F0_hz',
             'header_syms','header_n_corr','channel_num','hop_seq_idx',
             'pkt_len_idx','num_pdu_symbols',
-            'n_clamped','total_data_syms','pdu_syms_head',
+            'pdu_syms_head',
             'seq_num','ntw_id','score','time_s','phy_ver','start_sample'];
           var lines = [];
           for (var m = 0; m < keys.length; m++) {

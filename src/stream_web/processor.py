@@ -214,8 +214,10 @@ def processor_main(shm_name, buf_write_idx_val, rx_peak_frac_val,
                     int(round(td_hit["time_s"] * config.SAMPLE_RATE)),
                 )
                 td_start = max(0, td_center - td_samples // 10)
-                td_end = min(td_start + td_samples, len(decode_chunk))
-                if td_start < td_end:
+                td_end = td_start + td_samples
+                if td_end > len(decode_chunk):
+                    td_hit = None
+                if td_hit is not None:
                     td_seg = decode_chunk[td_start:td_end]
                     decode_info = dict(td_hit)
                     decode_info.setdefault("decoded", False)

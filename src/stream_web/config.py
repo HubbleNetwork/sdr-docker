@@ -43,7 +43,7 @@ IQ_BUFFER_SIZE = int(2.0 * SAMPLE_RATE)
 
 # Target image size for web display
 SPEC_IMG_WIDTH = 1200
-SPEC_IMG_HEIGHT = 400
+SPEC_IMG_HEIGHT = 200
 
 # -- Decoder ---------------------------------------------------------------
 DECODE_WINDOW_S = 1.0  # decode 1 s at a time
@@ -81,7 +81,7 @@ MAX_RAW = 10_000
 # Filtering
 PREAMBLE_F0_SNR_MIN = 5.0
 MIN_ENERGY_DBFS = -80.0
-MAX_CLAMPED_FRAC = 0.40
+
 
 # -- Web server & app behaviour --------------------------------------------
 FLASK_PORT = 8050

@@ -24,7 +24,7 @@ def cs_inc(chipset: str, field: str):
     if chipset not in _chipset_stats:
         _chipset_stats[chipset] = {
             "detected": 0, "snr_fail": 0, "header_fail": 0,
-            "clamped_fail": 0, "pdu_fail": 0, "ok": 0,
+            "pdu_fail": 0, "ok": 0,
         }
     _chipset_stats[chipset][field] += 1
     _last_attempt["chipset"] = chipset
@@ -273,11 +273,6 @@ def _decode_vneg1(signal, start_sample, sps):
         fsk_bin = max(0, min(config.NUM_FSK_BINS - 1, fsk_bin))
         data_bins.append(fsk_bin)
 
-    # Edge-symbol rejection
-    n_clamped = sum(1 for b in data_bins if b == 0 or b == config.NUM_FSK_BINS - 1)
-    if n_clamped / config.DATA_LEN_VNEG1 > config.MAX_CLAMPED_FRAC:
-        return None, None
-
     # RS decode v-1: length symbols at positions 0, 9, 18
     len_sym_0 = data_bins[0]
     len_sym_9 = data_bins[9]
@@ -428,6 +423,16 @@ def _decode_v1(signal, start_sample, sps):
     hop_seq_idx = int(hdr_bits[6:8], 2)
     channel_num = int(hdr_bits[8:12], 2)
 
+    # 4 bits encode 0-15; channels 16-18 alias to 0-2.
+    # Disambiguate by comparing measured center to both nominal frequencies.
+    candidate_b = channel_num + 16
+    if candidate_b < config.NUM_CHANNELS:
+        measured_center = F0 + 31.5 * synth_res_val
+        nominal_a = (channel_num - config.LO_CHANNEL) * config.CHANNEL_SPACING
+        nominal_b = (candidate_b - config.LO_CHANNEL) * config.CHANNEL_SPACING
+        if abs(measured_center - nominal_b) < abs(measured_center - nominal_a):
+            channel_num = candidate_b
+
     num_pdu_symbols = config.RS_N_V1[pkt_len_idx + 1]
     hopping_seq = config.HOPPING_SEQS[hop_seq_idx]
     _last_attempt.update(
@@ -467,18 +472,6 @@ def _decode_v1(signal, start_sample, sps):
 
     if len(pdu_syms) != num_pdu_symbols:
         _last_attempt["reason"] = "pdu_incomplete"
-        return None, None
-
-    # Edge-symbol rejection
-    all_data = header_syms + pdu_syms
-    n_clamped = sum(1 for b in all_data if b == 0 or b == config.NUM_FSK_BINS - 1)
-    if n_clamped / len(all_data) > config.MAX_CLAMPED_FRAC:
-        _last_attempt.update(n_clamped=n_clamped, total_data_syms=len(all_data))
-        cs_inc(chipset_name, "clamped_fail")
-        if _diag:
-            print(f"[v1-DIAG] FAIL clamped: {n_clamped}/{len(all_data)}="
-                  f"{n_clamped / len(all_data):.2f} > {config.MAX_CLAMPED_FRAC}, "
-                  f"chipset={chipset_name}")
         return None, None
 
     # De-scramble + RS decode PDU

@@ -51,7 +51,14 @@ def render_spec_image(chunks: list[np.ndarray], detections: list[dict] | None = 
     """Concat Sxx_dB chunks, apply viridis LUT, draw detection boxes, return JPEG bytes."""
     if not chunks:
         return b""
-    Sxx_dB = np.concatenate(chunks, axis=1)
+    Sxx_all = np.concatenate(chunks, axis=1)
+    full_cols = int(config.MAX_SPEC_CHUNKS * chunks[0].shape[1])
+    if Sxx_all.shape[1] < full_cols:
+        pad = np.full((Sxx_all.shape[0], full_cols - Sxx_all.shape[1]),
+                      np.min(Sxx_all), dtype=Sxx_all.dtype)
+        Sxx_dB = np.concatenate([pad, Sxx_all], axis=1)
+    else:
+        Sxx_dB = Sxx_all
 
     plow, phigh = np.percentile(Sxx_dB, [2, 99.5])
     if phigh <= plow:
@@ -65,7 +72,7 @@ def render_spec_image(chunks: list[np.ndarray], detections: list[dict] | None = 
 
     if detections:
         draw = ImageDraw.Draw(img)
-        total_time_s = len(chunks) * config.SPEC_CHUNK_S
+        total_time_s = config.SPEC_DURATION_S
         box_h = 20
 
         for det in detections:
@@ -276,10 +283,6 @@ def render_td_plot(iq_segment: np.ndarray, decode_info: dict | None = None) -> b
                 f"pdu_len={decode_info.get('num_pdu_symbols', '?')}"
             )
         reason = decode_info.get("reason", "")
-        if reason == "clamped_fail" and decode_info.get("n_clamped") is not None:
-            di_lines.append(
-                f"clamped: {decode_info['n_clamped']}/{decode_info.get('total_data_syms', '?')}"
-            )
         if reason == "pdu_fail" and decode_info.get("pdu_syms_head") is not None:
             di_lines.append(f"pdu[0:10]={decode_info['pdu_syms_head']}")
 
