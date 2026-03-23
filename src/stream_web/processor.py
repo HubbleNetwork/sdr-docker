@@ -144,18 +144,21 @@ def processor_main(shm_name, buf_write_idx_val, rx_peak_frac_val,
         dt_ms = (time.perf_counter() - t0) * 1000
 
         ts = time.strftime("%H:%M:%S")
+        unix_ts = time.time()
         decode_entries = []
         for pkt in packets:
             ver = pkt["phy_ver"]
             ntw_hex = f"0x{pkt['ntw_id']:09X}" if ver == -1 else f"0x{pkt['ntw_id']:08X}"
             decode_entries.append({
                 "timestamp": ts,
+                "unix_ts": unix_ts,
                 "phy_ver": ver,
                 "ntw_id": pkt["ntw_id"],
                 "ntw_id_hex": ntw_hex,
                 "seq_num": pkt["seq_num"],
                 "energy_dB": round(pkt["total_energy_dB"], 1),
                 "chipset": pkt.get("chipset", ""),
+                "channel_num": pkt.get("channel_num"),
                 "freq_delta_hz": pkt.get("freq_delta_hz"),
             })
 

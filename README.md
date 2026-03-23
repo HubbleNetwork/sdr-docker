@@ -18,28 +18,23 @@ that device — zero application code changes.
 
 ## Architecture
 
-| Component | Thread | Description |
-|-----------|--------|-------------|
-| **SDR RX** | GNU Radio flowgraph (C++ threads) | `soapy.source` → custom sink that writes into a 2 s circular buffer |
-| **Processor** | background Python thread | Every 0.5 s: compute spectrogram chunk, render 10 s image, decode |
-| **Flask server** | main | Serves web page with live spectrogram + decoded device table |
+| Component | Process / Thread | Description |
+|-----------|-----------------|-------------|
+| **SDR RX** | GNU Radio flowgraph (C++ threads) | `soapy.source` → custom sink that writes into a 2 s shared-memory circular buffer |
+| **Processor** | separate OS process | Every 0.5 s: compute spectrogram chunk, render 10 s image, decode. Runs in its own process to avoid GIL contention with the RX thread |
+| **Flask server** | main process | Serves web dashboard + JSON API on port 8050 |
 
 ### Data flow
 
 ```
-SDR  ──gr-soapy──>  BufferSink ──>  IQ circular buffer (2 s)
-                                          │
-                                          ├──> 0.5 s chunk ──> vis spectrogram (NFFT=4096)
-                                          │                        │
-                                          │                   deque of 20 chunks ──> JPEG image
-                                          │
-                                          └──> 1.0 s chunk ──> detection spectrogram (NFFT=625)
-                                                                   │
-                                                              template matching + NMS
-                                                                   │
-                                                              FSK demodulation + RS decode
-                                                                   │
-                                                              decoded device IDs + seq nums
+                      Main Process                          Processor Process
+                      ────────────                          ─────────────────
+SDR ──gr-soapy──> BufferSink ──> shared-memory IQ buffer ──> 0.5 s chunk ──> spectrogram
+                                   (2 s circular)           1.0 s chunk ──> detection + decode
+                                                                              │
+                                                                         result_queue
+                                                                              │
+                  Flask (/api/status, /api/packets) <── drain thread <────────┘
 ```
 
 ### Project structure
@@ -48,11 +43,11 @@ SDR  ──gr-soapy──>  BufferSink ──>  IQ circular buffer (2 s)
 src/stream_web/
 ├── config.py          # All SDR / decoder / display constants
 ├── gnuradio_rx.py     # GNU Radio flowgraph: soapy.source → BufferSink
-├── sdr.py             # Re-exports rx_loop (backward compat)
+├── sdr.py             # Re-exports rx_loop
 ├── decoder.py         # Dual-protocol preamble detection + packet decode
 ├── spectrogram.py     # Spectrogram computation and image rendering
-├── processor.py       # Processing loop (spec + decode + render)
-├── app.py             # Flask app, routes, thread orchestration
+├── processor.py       # Processing loop (runs in separate OS process)
+├── app.py             # Flask app, routes, API endpoints, process orchestration
 ├── templates/
 │   └── index.html     # Dashboard HTML
 └── static/
@@ -512,10 +507,57 @@ The dashboard auto-refreshes every 500 ms and provides:
 - **Live spectrogram** — 10 s rolling window with coloured detection boxes
   (orange = PHY v-1, red = PHY v1).
 - **Decodes tab** — per-device summary: PHY version, device ID, chipset, RSSI,
-  last 10 sequence numbers, last-seen timestamp.
+  frequency delta, last 10 sequence numbers, last-seen timestamp.
 - **Statistics tab** — per-chipset decode success rates.
+- **Signal Viewer** — view time-domain + spectrogram plots per device or per
+  chipset. Includes symbol timing, frequency labels, and full decode diagnostics.
+  Can capture failures for a specific chipset to aid debugging.
 - **Gain control** — adjust RX gain from the browser.
-- **Time-domain viewer** — enter a device ID to see a per-symbol magnitude plot.
+- **LO control** — adjust LO frequency in 1 kHz increments.
+
+### Packet feed API (`/api/packets`)
+
+A poll-and-drain JSONL endpoint for external agents / scripts.  Each call
+returns all packets decoded since the last call, one JSON object per line,
+then clears the buffer.
+
+**Response format** (`application/x-ndjson`):
+
+```json
+{"device_id": "0xBBAABB01", "seq_num": 155, "device_type": "silabs", "timestamp": 1709571234.567, "rssi_dB": -30.6, "channel_num": 13, "freq_offset_hz": 20902.0}
+{"device_id": "0xBBAABB01", "seq_num": 156, "device_type": "silabs", "timestamp": 1709571235.102, "rssi_dB": -31.2, "channel_num": 10, "freq_offset_hz": 20910.5}
+```
+
+**Fields:**
+
+| Field | Description |
+|-------|-------------|
+| `device_id` | Network ID as hex string |
+| `seq_num` | Packet sequence number |
+| `device_type` | Chipset name (e.g. `silabs`, `nordic`, `ti`) |
+| `timestamp` | Unix epoch (float, seconds) |
+| `rssi_dB` | Signal energy in dBFS |
+| `channel_num` | Frequency channel from the decoded header |
+| `freq_offset_hz` | Measured frequency offset from nominal channel center (Hz) |
+
+**CLI examples:**
+
+```bash
+# One-shot: fetch all new packets
+curl -s http://localhost:8050/api/packets
+
+# Continuous polling (every 2 seconds), append to JSONL file
+while true; do curl -s http://localhost:8050/api/packets >> decodes.jsonl; sleep 2; done
+
+# Pretty-print with jq
+curl -s http://localhost:8050/api/packets | jq .
+
+# Filter for a specific device
+curl -s http://localhost:8050/api/packets | jq 'select(.device_id == "0xBBAABB01")'
+
+# Monitor in real-time with watch
+watch -n 2 'curl -s http://localhost:8050/api/packets | jq .'
+```
 
 ---
 

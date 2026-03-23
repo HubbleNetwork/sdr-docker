@@ -10,6 +10,7 @@ sample drops.
 """
 
 import base64
+import json
 import logging
 import multiprocessing as mp
 import threading
@@ -89,6 +90,7 @@ class SharedState:
         self.latest_img: bytes = b""
         self.latest_detections: list[dict] = []
         self.decode_results: list[dict] = []
+        self.packet_feed: list[dict] = []
         self.detection_history: list[dict] = []
         self.decode_stats: dict = {
             "process_time_ms": 0, "n_detections": 0, "timestamp": "",
@@ -360,6 +362,32 @@ def api_td_info():
     return jsonify(info)
 
 
+@app.route("/api/packets", methods=["GET"])
+def api_packets():
+    """Poll-and-drain: return all decodes since last call as JSONL, then clear.
+
+    Each line is a JSON object with: device_id, seq_num, device_type,
+    timestamp, rssi_dB, channel_num, freq_offset_hz.
+    """
+    with state.lock:
+        entries = list(state.packet_feed)
+        state.packet_feed.clear()
+
+    lines = []
+    for e in entries:
+        lines.append(json.dumps({
+            "device_id": e["ntw_id_hex"],
+            "seq_num": e["seq_num"],
+            "device_type": e.get("chipset", ""),
+            "timestamp": e.get("unix_ts", 0),
+            "rssi_dB": e.get("energy_dB"),
+            "channel_num": e.get("channel_num"),
+            "freq_offset_hz": e.get("freq_delta_hz"),
+        }))
+    payload = "\n".join(lines) + ("\n" if lines else "")
+    return Response(payload, mimetype="application/x-ndjson")
+
+
 # ===========================================================================
 # Result drainer — receives processor output via mp.Queue
 # ===========================================================================
@@ -380,6 +408,8 @@ def _drain_results(state):
             if r.get("decode_entries"):
                 state.decode_results.extend(r["decode_entries"])
                 state.decode_results[:] = state.decode_results[-config.MAX_DECODE_HISTORY:]
+                state.packet_feed.extend(r["decode_entries"])
+                state.packet_feed[:] = state.packet_feed[-1000:]
             if r.get("stats"):
                 state.decode_stats = r["stats"]
             if r.get("td_img") is not None:
