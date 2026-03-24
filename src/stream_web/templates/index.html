@@ -43,11 +43,12 @@
           <th>Last RSSI (dBFS)</th>
           <th>&Delta;f (Hz)</th>
           <th>Last 10 Seq Numbers</th>
+          <th>Payload</th>
           <th>Last Seen</th>
         </tr>
       </thead>
       <tbody id="dev-body">
-        <tr><td colspan="7" class="no-data">Waiting for detections&hellip;</td></tr>
+        <tr><td colspan="8" class="no-data">Waiting for detections&hellip;</td></tr>
       </tbody>
     </table>
   </div>
@@ -179,6 +180,7 @@
             var dfVal = dev.freq_delta_hz != null
               ? dev.freq_delta_hz.toFixed(0)
               : '\u2014';
+            var plVal = dev.payload_b64 || '\u2014';
             html += '<tr>'
               + '<td class="' + phyCls + '">' + phyLabel + '</td>'
               + '<td class="c-id">' + dev.ntw_id_hex + '<br><small>' + dev.ntw_id + '</small></td>'
@@ -186,6 +188,7 @@
               + '<td class="c-nrg">' + dev.max_energy_dB.toFixed(1) + '</td>'
               + '<td class="c-df">' + dfVal + '</td>'
               + '<td class="c-seq">' + seqs + '</td>'
+              + '<td class="c-payload">' + plVal + '</td>'
               + '<td class="c-ts">' + dev.last_seen + '</td>'
               + '</tr>';
           }
@@ -265,9 +268,9 @@
 
     function resetDetections() {
       fetch('/api/reset', { method: 'POST' }).then(function() {
-        tbody.innerHTML = '<tr><td colspan="7" class="no-data">Cleared.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="no-data">Cleared.</td></tr>';
         document.getElementById('cs-body').innerHTML =
-          '<tr><td colspan="7" class="no-data">Cleared.</td></tr>';
+          '<tr><td colspan="8" class="no-data">Cleared.</td></tr>';
       });
     }
 

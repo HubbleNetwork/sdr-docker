@@ -241,6 +241,14 @@ def api_status():
             d["last_seen"] = r["timestamp"]
             if r.get("freq_delta_hz") is not None:
                 d["freq_delta_hz"] = r["freq_delta_hz"]
+            pb = r.get("payload_bytes") or 0
+            pv = r.get("payload_val")
+            if pb > 0 and pv is not None:
+                d["payload_b64"] = base64.b64encode(
+                    pv.to_bytes(pb, "big")
+                ).decode("ascii")
+            elif pb == 0:
+                d["payload_b64"] = ""
 
         for d in devices.values():
             seen = set()
@@ -251,6 +259,7 @@ def api_status():
                     unique_seqs.append(s)
             d["seq_nums"] = unique_seqs[-10:]
             d.setdefault("freq_delta_hz", None)
+            d.setdefault("payload_b64", "")
 
         dev_list = sorted(devices.values(), key=lambda x: x["ntw_id"])
         stats = dict(state.decode_stats)
@@ -375,6 +384,12 @@ def api_packets():
 
     lines = []
     for e in entries:
+        pb = e.get("payload_bytes") or 0
+        pv = e.get("payload_val")
+        if pb > 0 and pv is not None:
+            payload_b64 = base64.b64encode(pv.to_bytes(pb, "big")).decode("ascii")
+        else:
+            payload_b64 = ""
         lines.append(json.dumps({
             "device_id": e["ntw_id_hex"],
             "seq_num": e["seq_num"],
@@ -383,6 +398,7 @@ def api_packets():
             "rssi_dB": e.get("energy_dB"),
             "channel_num": e.get("channel_num"),
             "freq_offset_hz": e.get("freq_delta_hz"),
+            "payload_b64": payload_b64,
         }))
     payload = "\n".join(lines) + ("\n" if lines else "")
     return Response(payload, mimetype="application/x-ndjson")

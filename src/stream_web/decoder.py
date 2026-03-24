@@ -523,7 +523,8 @@ def _decode_v1(signal, start_sample, sps):
         {
             "phy_ver": 1, "ntw_id": ntw_id, "seq_num": seq_num,
             "auth_tag": auth_tag, "payload_proto_ver": payload_proto_ver,
-            "payload_val": payload_val, "chipset": chipset_name,
+            "payload_val": payload_val, "payload_bytes": payload_bytes,
+            "chipset": chipset_name,
             "channel_num": channel_num, "hop_seq_idx": hop_seq_idx,
             "header_n_corr": header_n_corr, "pdu_n_corr": pdu_n_corr,
             "measured_synth_res": round(measured_synth_res, 2),

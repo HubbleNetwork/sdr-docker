@@ -160,6 +160,8 @@ def processor_main(shm_name, buf_write_idx_val, rx_peak_frac_val,
                 "chipset": pkt.get("chipset", ""),
                 "channel_num": pkt.get("channel_num"),
                 "freq_delta_hz": pkt.get("freq_delta_hz"),
+                "payload_val": pkt.get("payload_val"),
+                "payload_bytes": pkt.get("payload_bytes"),
             })
 
         stats = {
