@@ -193,7 +193,7 @@ def render_td_plot(iq_segment: np.ndarray, decode_info: dict | None = None) -> b
         ax_td.axvline(t1, color="#22d3ee", linewidth=0.5, alpha=0.4)
         df = sym_freqs[i] - f0
         if i == 0:
-            lbl = f"F31={sym_freqs[i]:.0f}"
+            lbl = f"F63={sym_freqs[i]:.0f}"
         elif i == 1:
             lbl = f"F0={f0:.0f}"
         else:
@@ -266,9 +266,9 @@ def render_td_plot(iq_segment: np.ndarray, decode_info: dict | None = None) -> b
         if decode_info.get("energy_dB") is not None:
             di_lines.append(f"energy: {decode_info['energy_dB']:.1f} dBFS")
 
-        if decode_info.get("F31_snr") is not None:
+        if decode_info.get("F63_snr") is not None:
             di_lines.append(
-                f"SNR={decode_info['F31_snr']:.1f}  "
+                f"SNR={decode_info['F63_snr']:.1f}  "
                 f"synth_res={decode_info.get('measured_synth_res', '?')} Hz"
             )
         if decode_info.get("F0_hz") is not None:

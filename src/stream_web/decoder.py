@@ -336,14 +336,14 @@ def _decode_v1(signal, start_sample, sps):
     _v1_diag_counter += 1
     _diag = config.VERBOSE or (_v1_diag_counter % 50 == 1)
 
-    # F31 / F0 estimation
-    psd_31 = np.zeros(config.samples_per_symbol)
+    # F63 / F0 estimation
+    psd_63 = np.zeros(config.samples_per_symbol)
     for sym in config.on_indices_v1:
         s0 = start_sample + sym * sps["slot"]
         if s0 + config.samples_per_symbol > len(signal):
             return None, None
-        psd_31 += np.abs(np.fft.fft(signal[s0: s0 + config.samples_per_symbol])) ** 2
-    psd_31 /= len(config.on_indices_v1)
+        psd_63 += np.abs(np.fft.fft(signal[s0: s0 + config.samples_per_symbol])) ** 2
+    psd_63 /= len(config.on_indices_v1)
 
     psd_0 = np.zeros(config.samples_per_symbol)
     for sym in config.off_indices_v1:
@@ -353,42 +353,43 @@ def _decode_v1(signal, start_sample, sps):
         psd_0 += np.abs(np.fft.fft(signal[s0: s0 + config.samples_per_symbol])) ** 2
     psd_0 /= len(config.off_indices_v1)
 
-    psd_diff_31 = psd_31 - psd_0
-    F31_bin = np.argmax(psd_diff_31)
-    F31_snr = psd_diff_31[F31_bin] / (np.median(np.abs(psd_diff_31)) + 1e-30)
+    psd_diff_63 = psd_63 - psd_0
+    F63_bin = np.argmax(psd_diff_63)
+    F63_snr = psd_diff_63[F63_bin] / (np.median(np.abs(psd_diff_63)) + 1e-30)
 
-    psd_diff_0 = psd_0 - psd_31
+    psd_diff_0 = psd_0 - psd_63
     F0_bin = np.argmax(psd_diff_0)
 
-    if F31_snr < config.PREAMBLE_F0_SNR_MIN:
+    if F63_snr < config.PREAMBLE_F0_SNR_MIN:
         _last_attempt["reason"] = "snr_fail"
         if _diag:
-            print(f"[v1-DIAG] FAIL snr: F31_snr={F31_snr:.1f} < {config.PREAMBLE_F0_SNR_MIN}")
+            print(f"[v1-DIAG] FAIL snr: F63_snr={F63_snr:.1f} < {config.PREAMBLE_F0_SNR_MIN}")
         return None, None
 
     F0 = _interp_peak(psd_diff_0, F0_bin, config.fft_freqs)
-    F31 = _interp_peak(psd_diff_31, F31_bin, config.fft_freqs)
+    F63 = _interp_peak(psd_diff_63, F63_bin, config.fft_freqs)
 
-    synth_res_signed = (F31 - F0) / 31.0
+    synth_res_signed = (F63 - F0) / 63.0
     measured_synth_res = abs(synth_res_signed)
     chipset_name, table_synth_res = _identify_chipset(measured_synth_res)
     synth_res_val = table_synth_res if synth_res_signed >= 0 else -table_synth_res
+    device_channel_spacing = config.DEVICE_CHANNEL_SPACING[chipset_name]
     cs_inc(chipset_name, "detected")
 
     if _diag:
         sign_char = "+" if synth_res_signed >= 0 else "-"
-        print(f"[v1-DIAG] F0={F0:.1f} F31={F31:.1f} Hz, "
+        print(f"[v1-DIAG] F0={F0:.1f} F63={F63:.1f} Hz, "
               f"meas_sr={sign_char}{measured_synth_res:.2f} -> {chipset_name}(val={synth_res_val:.1f}), "
-              f"snr={F31_snr:.1f}")
+              f"snr={F63_snr:.1f}")
 
     total_energy_dBFS = 10.0 * np.log10(
-        max(psd_0[F0_bin], psd_31[F31_bin]) / (config.samples_per_symbol * config.ADC_FULL_SCALE) ** 2 + 1e-30
+        max(psd_0[F0_bin], psd_63[F63_bin]) / (config.samples_per_symbol * config.ADC_FULL_SCALE) ** 2 + 1e-30
     )
     _last_attempt.update(
         F0_hz=F0, energy_dB=total_energy_dBFS,
         measured_synth_res=round(measured_synth_res, 2),
         synth_res_val=round(synth_res_val, 1),
-        F31_snr=round(F31_snr, 1),
+        F63_snr=round(F63_snr, 1),
     )
 
     # Demodulate header (6 symbols, same channel) with timing tolerance
@@ -462,7 +463,7 @@ def _decode_v1(signal, start_sample, sps):
             (hop_index + sym_abs_idx // config.NUM_SYM_PER_HOP) % config.NUM_CHANNELS
         ]
         if next_channel != current_channel:
-            F0_current += (next_channel - current_channel) * config.CHANNEL_SPACING
+            F0_current += (next_channel - current_channel) * device_channel_spacing
             chan_mask = _build_chan_mask(F0_current, synth_res_val)
             current_channel = next_channel
 

@@ -1,5 +1,6 @@
 """Configuration constants and derived parameters for the SDR stream decoder."""
 
+import math
 import os
 
 import numpy as np
@@ -12,7 +13,7 @@ SDR_TYPE = os.environ.get("SDR_TYPE", "pluto").lower()  # "pluto" | "bladerf"
 PLUTO_URI = os.environ.get("PLUTO_URI", "ip:192.168.2.1")
 
 # -- Radio parameters (shared across SDR backends) -------------------------
-CENTER_FREQ_HZ = int(2.482754875e9)
+CENTER_FREQ_HZ = 2_482_440_375
 SAMPLE_RATE = 781_250  # 6.25 MHz / 8
 RX_BUFFER_SIZE = 2 ** 16  # ~84 ms per read
 RF_BANDWIDTH = int(SAMPLE_RATE)
@@ -100,9 +101,9 @@ TD_WINDOW_S = 0.5
 SYNTH_RES = {
     "ti": 338.0,
     "nordic": 488.28125,
-    "silabs": 370,
-    "esp": 400,
-    "atmosic": 500,
+    "silabs": 370.0,
+    "esp": 400.0,
+    "atmosic": 500.0,
 }
 
 # v1 Reed-Solomon block sizes: index 0 = header, 1-4 = PDU lengths
@@ -116,7 +117,16 @@ RS_N_VNEG1 = [21, 23, 27, 29, 33, 35, 39, 41]
 NUM_HEADER_SYMS = RS_N_V1[0]  # 6
 NUM_CHANNELS = 19
 LO_CHANNEL = 9  # channel 9 center = CENTER_FREQ_HZ (0 Hz baseband)
-CHANNEL_SPACING = 25_500.0  # Hz
+CHANNEL_SPACING = 25_750.0  # Hz
+
+# Actual per-device channel spacing: each synthesiser can only hop in
+# integer multiples of its synth_res.  Silabs is a special case (protocol
+# defines its spacing as exactly 25500 Hz).
+DEVICE_CHANNEL_SPACING = {
+    name: (CHANNEL_SPACING if name == "silabs"
+           else math.floor(CHANNEL_SPACING / sr) * sr)
+    for name, sr in SYNTH_RES.items()
+}
 NUM_SYM_PER_HOP = 16
 HOPPING_SEQS = [
     [3, 14, 5, 6, 9, 2, 12, 8, 15, 4, 11, 13, 17, 10, 1, 7, 0, 18, 16],
@@ -130,9 +140,9 @@ PAYLOAD_LEN_BYTES_V1 = [0, 4, 9, 13]
 preamble_on_idx = [i for i, b in enumerate(PREAMBLE_BITS) if b == 1]
 preamble_off_idx = [i for i, b in enumerate(PREAMBLE_BITS) if b == 0]
 
-# v1 preamble code indices (for F31/F0 estimation)
-PREAMBLE_CODE_V1 = [31, 0, 31, 0, 31, 0, 31, 31]
-on_indices_v1 = [i for i, b in enumerate(PREAMBLE_CODE_V1) if b == 31]
+# v1 preamble code indices (for F63/F0 estimation)
+PREAMBLE_CODE_V1 = [63, 0, 63, 0, 63, 0, 63, 63]
+on_indices_v1 = [i for i, b in enumerate(PREAMBLE_CODE_V1) if b == 63]
 off_indices_v1 = [i for i, b in enumerate(PREAMBLE_CODE_V1) if b == 0]
 
 # -- Derived timing --------------------------------------------------------
