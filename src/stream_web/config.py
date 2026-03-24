@@ -13,12 +13,12 @@ SDR_TYPE = os.environ.get("SDR_TYPE", "pluto").lower()  # "pluto" | "bladerf"
 PLUTO_URI = os.environ.get("PLUTO_URI", "ip:192.168.2.1")
 
 # -- Radio parameters (shared across SDR backends) -------------------------
-CENTER_FREQ_HZ = 2_482_440_375
+CENTER_FREQ_HZ = 2_482_754_875
 SAMPLE_RATE = 781_250  # 6.25 MHz / 8
 RX_BUFFER_SIZE = 2 ** 16  # ~84 ms per read
 RF_BANDWIDTH = int(SAMPLE_RATE)
 RX_GAIN_MODE = "manual"
-RX_INITIAL_GAIN_DB = 40
+RX_INITIAL_GAIN_DB = 20
 RX_GAIN_MIN_DB = 0
 RX_GAIN_STEP_DB = 2
 
@@ -117,7 +117,7 @@ RS_N_VNEG1 = [21, 23, 27, 29, 33, 35, 39, 41]
 NUM_HEADER_SYMS = RS_N_V1[0]  # 6
 NUM_CHANNELS = 19
 LO_CHANNEL = 9  # channel 9 center = CENTER_FREQ_HZ (0 Hz baseband)
-CHANNEL_SPACING = 25_750.0  # Hz
+CHANNEL_SPACING = 25_500.0  # Hz
 
 # Actual per-device channel spacing: each synthesiser can only hop in
 # integer multiples of its synth_res.  Silabs is a special case (protocol
