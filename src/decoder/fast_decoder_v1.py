@@ -122,7 +122,7 @@ class FastDecoderV1:
 
         return correlation
         
-    def _detect_preamble(self, preamble_indices, threshold=0.8, step=31):
+    def _detect_preamble(self, preamble_indices, threshold=0.8, step=63):
         """
         Detect a single preamble in the data
 
@@ -277,10 +277,9 @@ class FastDecoderV1:
         """
         # silabs case is special bc step = 74 (synth res) * 5
         if self.synth_res == 370:
-            return 25500
+            return 25750
 
-        # return min(64, math.floor(25500 / self.synth_res)) * self.synth_res
-        return math.floor(25500 / self.synth_res) * self.synth_res
+        return round(25750 / self.synth_res) * self.synth_res
 
     def _analyze_packet_timing(self, data_start, total_symbols):
         """
