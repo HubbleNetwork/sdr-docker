@@ -1,0 +1,59 @@
+[build-system]
+requires = ["hatchling >= 1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sdr-docker"
+version = "1.0.0"
+requires-python = ">=3.10"
+authors = [
+  { name = "Hubble Network" },
+]
+readme = "README.md"
+description = "Multi-SDR streaming spectrogram + packet decoder (PlutoSDR, bladeRF, …)"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "fast-decoder @ git+https://github.com/hubblenetwork/fast-decoder.git",
+    "flask",
+    "numpy>=1.26,<2",
+    "scipy>=1.13",
+    "matplotlib",
+    "Pillow",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7",
+    "pytest-cov",
+    "ruff",
+]
+
+# ---- Hatchling build config (src layout) ----
+[tool.hatch.build.targets.wheel]
+packages = ["src/stream_web"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src",
+    "README.md",
+    "LICENSE",
+    "pyproject.toml",
+]
+
+# ---- Testing ----
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+# ---- Linting ----
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]

@@ -1,16 +1,17 @@
-"""Spectrogram computation and image rendering."""
+"""Spectrogram image rendering (computation lives in fast_decoder)."""
 
 import io
 
 import matplotlib
-matplotlib.use("Agg")
-from matplotlib.figure import Figure
-from matplotlib.backends.backend_agg import FigureCanvasAgg
-import numpy as np
-from PIL import Image, ImageDraw, ImageFont
-from scipy.signal import spectrogram as scipy_spectrogram
 
-from . import config
+matplotlib.use("Agg")
+import numpy as np  # noqa: E402
+from matplotlib.backends.backend_agg import FigureCanvasAgg  # noqa: E402
+from matplotlib.figure import Figure  # noqa: E402
+from PIL import Image, ImageDraw, ImageFont  # noqa: E402
+from scipy.signal import spectrogram as scipy_spectrogram  # noqa: E402
+
+from . import config  # noqa: E402
 
 # -- Pre-computed LUT and font ----------------------------------------------
 
@@ -23,24 +24,6 @@ except Exception:
         _SPEC_FONT = ImageFont.truetype("/System/Library/Fonts/Menlo.ttc", size=14)
     except Exception:
         _SPEC_FONT = ImageFont.load_default()
-
-
-# ===========================================================================
-# Spectrogram chunk computation
-# ===========================================================================
-
-def compute_spec_chunk(iq_chunk: np.ndarray) -> np.ndarray:
-    """Compute the vis spectrogram for a 0.5 s IQ chunk. Returns Sxx_dB (freq x time)."""
-    chunk = iq_chunk - iq_chunk.mean()
-    f, t, Sxx = scipy_spectrogram(
-        chunk, fs=config.SAMPLE_RATE, nperseg=config.NFFT_VIS,
-        noverlap=config.NOVERLAP_VIS, return_onesided=False,
-    )
-    f = np.fft.fftshift(f)
-    Sxx = np.fft.fftshift(Sxx, axes=0)
-    dc_idx = len(f) // 2
-    Sxx[dc_idx, :] = 0.0
-    return (10.0 * np.log10(Sxx + 1e-12)).astype(np.float32)
 
 
 # ===========================================================================

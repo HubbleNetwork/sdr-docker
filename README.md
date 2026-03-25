@@ -1,8 +1,15 @@
-# pluto-sdr-docker
+# sdr-docker
+
+[![CI](https://github.com/hubblenetwork/pluto-sdr-docker/actions/workflows/ci.yml/badge.svg)](https://github.com/hubblenetwork/pluto-sdr-docker/actions/workflows/ci.yml)
+[![Docker](https://github.com/hubblenetwork/pluto-sdr-docker/actions/workflows/docker.yml/badge.svg)](https://github.com/hubblenetwork/pluto-sdr-docker/actions/workflows/docker.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 Live rolling spectrogram and packet decoder for SDR devices.  Streams IQ data,
-displays a real-time spectrogram, and decodes packets — all served as a web
-dashboard on port **8050**.
+displays a real-time spectrogram, decodes packets, and supports full-duplex TX —
+all served as a web dashboard on port **8050**.
+
+Uses [fast-decoder](https://github.com/hubblenetwork/fast-decoder) for packet
+detection and decoding.
 
 ## Supported SDR devices
 
@@ -41,13 +48,13 @@ SDR ──gr-soapy──> BufferSink ──> shared-memory IQ buffer ──> 0.5
 
 ```
 src/stream_web/
-├── config.py          # All SDR / decoder / display constants
-├── gnuradio_rx.py     # GNU Radio flowgraph: soapy.source → BufferSink
+├── config.py          # SDR / display constants (protocol constants via fast-decoder)
+├── gnuradio_rx.py     # GNU Radio RX flowgraph: soapy.source → BufferSink
+├── gnuradio_tx.py     # GNU Radio TX flowgraph: soapy.sink (tone / packet file)
 ├── sdr.py             # Re-exports rx_loop
-├── decoder.py         # Dual-protocol preamble detection + packet decode
-├── spectrogram.py     # Spectrogram computation and image rendering
+├── spectrogram.py     # Spectrogram image rendering (computation via fast-decoder)
 ├── processor.py       # Processing loop (runs in separate OS process)
-├── app.py             # Flask app, routes, API endpoints, process orchestration
+├── app.py             # Flask app, RX/TX routes, API endpoints, orchestration
 ├── templates/
 │   └── index.html     # Dashboard HTML
 └── static/
@@ -60,7 +67,7 @@ The application has two layers of dependencies:
 
 | Layer | What | How to install |
 |-------|------|----------------|
-| **Python packages** (pip) | flask, numpy, scipy, reedsolo, matplotlib, opencv-python-headless, Pillow | `pip install -e .` |
+| **Python packages** (pip) | fast-decoder, flask, numpy, scipy, matplotlib, Pillow | `pip install -e .` |
 | **System libraries** (apt / brew / source) | GNU Radio >= 3.9, SoapySDR, per-device SoapySDR modules, device libraries | See platform-specific sections below |
 
 GNU Radio and SoapySDR ship Python bindings that are installed system-wide
@@ -458,7 +465,7 @@ source .venv/bin/activate
 pip install -e .
 ```
 
-> **NumPy constraint:** `setup.py` pins `numpy>=1.26,<2`.  The GNU Radio
+> **NumPy constraint:** `pyproject.toml` pins `numpy>=1.26,<2`.  The GNU Radio
 > packages from apt (and Homebrew) are compiled against the NumPy 1.x ABI.
 > If NumPy 2.x is installed, `import gnuradio` will fail with
 > `_ARRAY_API not found`.
@@ -495,7 +502,7 @@ All tuneable parameters live in
 | `PLUTO_URI` | `ip:192.168.2.1` | PlutoSDR connection URI |
 | `CENTER_FREQ_HZ` | 2.482754875 GHz | Centre frequency |
 | `SAMPLE_RATE` | 781 250 Hz | ADC sample rate |
-| `RX_INITIAL_GAIN_DB` | 40 | Initial RX gain (adjustable from the UI) |
+| `RX_INITIAL_GAIN_DB` | 20 | Initial RX gain (adjustable from the UI) |
 | `FLASK_PORT` | 8050 | Web server port |
 | `SPEC_DURATION_S` | 10.0 | Rolling spectrogram window |
 | `DECODE_INTERVAL_S` | 0.5 | Decode cycle interval |
@@ -514,6 +521,8 @@ The dashboard auto-refreshes every 500 ms and provides:
   Can capture failures for a specific chipset to aid debugging.
 - **Gain control** — adjust RX gain from the browser.
 - **LO control** — adjust LO frequency in 1 kHz increments.
+- **TX Control** — transmit a CW tone or play back IQ files, with attenuation
+  control.  Full-duplex (TX runs simultaneously with RX).
 
 ### Packet feed API (`/api/packets`)
 
@@ -524,8 +533,8 @@ then clears the buffer.
 **Response format** (`application/x-ndjson`):
 
 ```json
-{"device_id": "0xBBAABB01", "seq_num": 155, "device_type": "silabs", "timestamp": 1709571234.567, "rssi_dB": -30.6, "channel_num": 13, "freq_offset_hz": 20902.0}
-{"device_id": "0xBBAABB01", "seq_num": 156, "device_type": "silabs", "timestamp": 1709571235.102, "rssi_dB": -31.2, "channel_num": 10, "freq_offset_hz": 20910.5}
+{"device_id": "0xBBAABB01", "seq_num": 155, "device_type": "silabs", "timestamp": 1709571234.567, "rssi_dB": -30.6, "channel_num": 13, "freq_offset_hz": 20902.0, "payload_b64": "AQIDBAUGBwgJCgsMDQ=="}
+{"device_id": "0xBBAABB01", "seq_num": 156, "device_type": "silabs", "timestamp": 1709571235.102, "rssi_dB": -31.2, "channel_num": 10, "freq_offset_hz": 20910.5, "payload_b64": "AQIDBAUGBwgJCgsMDQ=="}
 ```
 
 **Fields:**
@@ -539,6 +548,7 @@ then clears the buffer.
 | `rssi_dB` | Signal energy in dBFS |
 | `channel_num` | Frequency channel from the decoded header |
 | `freq_offset_hz` | Measured frequency offset from nominal channel center (Hz) |
+| `payload_b64` | Packet payload as base64-encoded string (empty if no payload) |
 
 **CLI examples:**
 

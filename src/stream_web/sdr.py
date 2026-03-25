@@ -4,4 +4,4 @@ This module exists for backward compatibility; the actual implementation
 lives in :mod:`gnuradio_rx`.
 """
 
-from .gnuradio_rx import rx_loop
+from .gnuradio_rx import rx_loop  # noqa: F401

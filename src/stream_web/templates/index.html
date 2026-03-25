@@ -91,6 +91,28 @@
     <pre id="td-detail"></pre>
   </div>
 
+  <div id="tx-panel">
+    <h2>TX Control</h2>
+    <div class="toolbar">
+      <span class="toolbar-label">Mode:</span>
+      <button class="btn" id="tx-tone-btn" onclick="txStart('tone')">Tone</button>
+      <button class="btn" id="tx-pkt-btn" onclick="txStartPacket()">Packet</button>
+      <button class="btn btn-stop" id="tx-stop-btn" onclick="txStop()">Stop</button>
+      <span class="toolbar-sep"></span>
+      <span class="toolbar-label">File:</span>
+      <input id="tx-file-input" type="text" placeholder="filename.out" style="width:180px" />
+      <label><input id="tx-repeat-cb" type="checkbox" checked /> Repeat</label>
+      <span class="toolbar-sep"></span>
+      <span class="toolbar-label">Attn (dB):</span>
+      <button class="btn" onclick="txAttn(-1)">&#x25BC;</button>
+      <span id="tx-attn-val">0</span>
+      <button class="btn" onclick="txAttn(1)">&#x25B2;</button>
+      <span class="toolbar-sep"></span>
+      <span class="toolbar-label">Status:</span>
+      <span id="tx-status">off</span>
+    </div>
+  </div>
+
   <script>
     function switchTab(name) {
       document.querySelectorAll('.tab-btn').forEach(function(b, i) {
@@ -354,6 +376,46 @@
         });
       }
     }
+
+    /* TX controls */
+    function txPost(url, body) {
+      return fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      }).then(function(r) { return r.json(); });
+    }
+    function txStart(mode) {
+      txPost('/api/tx/start', { mode: mode }).then(txUpdateUI);
+    }
+    function txStartPacket() {
+      var f = document.getElementById('tx-file-input').value.trim();
+      var rep = document.getElementById('tx-repeat-cb').checked;
+      if (!f) { alert('Enter a filename'); return; }
+      txPost('/api/tx/start', { mode: 'packet', file: f, repeat: rep }).then(txUpdateUI);
+    }
+    function txStop() {
+      txPost('/api/tx/stop', {}).then(txUpdateUI);
+    }
+    function txAttn(dir) {
+      fetch('/api/tx/attn').then(function(r){ return r.json(); }).then(function(d) {
+        var cur = d.attn_db || 0;
+        txPost('/api/tx/attn', { attn_db: cur + dir }).then(function(d2) {
+          document.getElementById('tx-attn-val').textContent = d2.attn_db;
+        });
+      });
+    }
+    function txUpdateUI(d) {
+      if (!d) return;
+      document.getElementById('tx-status').textContent =
+        d.running ? (d.mode || 'on') : 'off';
+      if (d.attenuation_db !== undefined)
+        document.getElementById('tx-attn-val').textContent = d.attenuation_db;
+    }
+    (function pollTx() {
+      fetch('/api/tx/status').then(function(r){ return r.json(); }).then(txUpdateUI).catch(function(){});
+      setTimeout(pollTx, 2000);
+    })();
   </script>
 </body>
 </html>

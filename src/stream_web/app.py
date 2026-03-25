@@ -10,23 +10,24 @@ sample drops.
 """
 
 import base64
+import io
 import json
 import logging
 import multiprocessing as mp
+import os
 import threading
 from collections import deque
 from multiprocessing import shared_memory
 
 import numpy as np
-import io
-
-from flask import Flask, Response, jsonify, render_template, request as flask_request, send_file
+from fast_decoder import get_chipset_stats, reset_chipset_stats
+from flask import Flask, Response, jsonify, render_template, send_file
+from flask import request as flask_request
 
 from . import config
-from .decoder import get_chipset_stats, reset_chipset_stats
+from .gnuradio_tx import TX_SOURCE_DIR, TXFlowgraph
 from .processor import processor_main
 from .sdr import rx_loop
-
 
 # ===========================================================================
 # Shared application state
@@ -193,6 +194,7 @@ class SharedState:
 
 
 state = SharedState()
+tx_fg: TXFlowgraph | None = None
 
 
 # ===========================================================================
@@ -402,6 +404,79 @@ def api_packets():
         }))
     payload = "\n".join(lines) + ("\n" if lines else "")
     return Response(payload, mimetype="application/x-ndjson")
+
+
+# ===========================================================================
+# TX API routes
+# ===========================================================================
+
+def _get_tx() -> TXFlowgraph:
+    """Lazy-init the TX flowgraph singleton."""
+    global tx_fg
+    if tx_fg is None:
+        tx_fg = TXFlowgraph()
+    return tx_fg
+
+
+@app.route("/api/tx/start", methods=["POST"])
+def api_tx_start():
+    data = flask_request.get_json(silent=True) or {}
+    mode = data.get("mode", "tone")
+    fg = _get_tx()
+    try:
+        if mode == "tone":
+            fg.tone_mode()
+        elif mode == "packet":
+            file_name = data.get("file", "")
+            repeat = data.get("repeat", True)
+            if not file_name:
+                return jsonify(error="file is required for packet mode"), 400
+            file_path = os.path.join(TX_SOURCE_DIR, file_name)
+            fg.packet_mode(file_path, repeat=repeat)
+        else:
+            return jsonify(error=f"Unknown mode: {mode}"), 400
+        if not fg.is_running:
+            fg.start()
+        return jsonify(fg.status_dict())
+    except Exception as e:
+        return jsonify(error=str(e)), 500
+
+
+@app.route("/api/tx/stop", methods=["POST"])
+def api_tx_stop():
+    if tx_fg is None or not tx_fg.is_running:
+        return jsonify(running=False)
+    tx_fg.stop()
+    return jsonify(running=False)
+
+
+@app.route("/api/tx/freq", methods=["GET", "POST"])
+def api_tx_freq():
+    fg = _get_tx()
+    if flask_request.method == "POST":
+        data = flask_request.get_json(silent=True) or {}
+        freq = int(data.get("freq_hz", fg.freq_hz))
+        fg.set_frequency(freq)
+        return jsonify(freq_hz=fg.freq_hz)
+    return jsonify(freq_hz=fg.freq_hz)
+
+
+@app.route("/api/tx/attn", methods=["GET", "POST"])
+def api_tx_attn():
+    fg = _get_tx()
+    if flask_request.method == "POST":
+        data = flask_request.get_json(silent=True) or {}
+        attn = float(data.get("attn_db", fg.attenuation_db))
+        fg.set_attenuation(attn)
+        return jsonify(attn_db=fg.attenuation_db)
+    return jsonify(attn_db=fg.attenuation_db)
+
+
+@app.route("/api/tx/status", methods=["GET"])
+def api_tx_status():
+    if tx_fg is None:
+        return jsonify(running=False, mode=None, freq_hz=0, attenuation_db=0)
+    return jsonify(tx_fg.status_dict())
 
 
 # ===========================================================================

@@ -18,7 +18,6 @@ bring up a clean instance.
 from __future__ import annotations
 
 import os
-import sys
 import time
 from typing import TYPE_CHECKING
 
@@ -29,7 +28,6 @@ if TYPE_CHECKING:
     from .app import SharedState
 
 from . import config
-
 
 # ---------------------------------------------------------------------------
 # Device driver strings

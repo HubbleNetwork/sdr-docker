@@ -62,7 +62,7 @@ ENV PYTHONUNBUFFERED=1
 
 # Copy source code into the container
 WORKDIR /app
-COPY setup.py /app/
+COPY pyproject.toml /app/
 COPY run_stream.py /app/
 COPY src/ /app/src/
 COPY entrypoint.sh /app/
@@ -73,6 +73,9 @@ COPY entrypoint.sh /app/
 # --ignore-installed is needed because some system distutils packages
 # (blinker, etc.) can't be pip-uninstalled cleanly.
 RUN python3 -m pip install --upgrade pip setuptools wheel
+RUN python3 -m pip install --ignore-installed \
+    "fast-decoder @ git+https://github.com/hubblenetwork/fast-decoder.git" \
+    "numpy>=1.26,<2"
 RUN python3 -m pip install --ignore-installed -e . "numpy>=1.26,<2"
 
 # Start the live spectrogram + decoder web server

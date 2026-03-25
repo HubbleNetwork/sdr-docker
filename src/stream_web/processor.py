@@ -13,10 +13,10 @@ from collections import deque
 from multiprocessing import shared_memory
 
 import numpy as np
+from fast_decoder import compute_spec_chunk, decode_signal
 
 from . import config
-from .decoder import decode_signal
-from .spectrogram import compute_spec_chunk, render_spec_image, render_td_plot
+from .spectrogram import render_spec_image, render_td_plot
 
 
 def processor_main(shm_name, buf_write_idx_val, rx_peak_frac_val,
