@@ -10,10 +10,8 @@ import os
 import fast_decoder.constants as _fdc
 from fast_decoder.constants import (  # noqa: F401 — re-exported
     ADC_FULL_SCALE,
-    CHANNEL_SPACING,
     DATA_LEN_VNEG1,
     DETECTION_THRESHOLD,
-    DEVICE_CHANNEL_SPACING,
     F0_TOL,
     FREQ_STEP_VNEG1,
     GAP_DURATIONS,
