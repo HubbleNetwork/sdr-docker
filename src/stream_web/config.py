@@ -64,7 +64,7 @@ SDR_TYPE = os.environ.get("SDR_TYPE", "pluto").lower()  # "pluto" | "bladerf"
 PLUTO_URI = os.environ.get("PLUTO_URI", "ip:192.168.2.1")
 
 # -- Radio parameters (shared across SDR backends) -------------------------
-CENTER_FREQ_HZ = 2_482_754_875
+CENTER_FREQ_HZ = 2_482_440_375
 SAMPLE_RATE = 781_250  # 6.25 MHz / 8
 RX_BUFFER_SIZE = 2 ** 16  # ~84 ms per read
 RF_BANDWIDTH = int(SAMPLE_RATE)
@@ -105,5 +105,9 @@ SDR_RETRY_INTERVAL_S = 3
 # -- Time-domain viewer ----------------------------------------------------
 TD_WINDOW_S = 0.5
 
-# -- Sync fast_decoder sample rate with this SDR config --------------------
+# -- Sync fast_decoder with this SDR config --------------------------------
+_fdc.CHANNEL_SPACING = 25_750.0
+_fdc.DEVICE_CHANNEL_SPACING = {name: _fdc.CHANNEL_SPACING for name in _fdc.SYNTH_RES}
+CHANNEL_SPACING = _fdc.CHANNEL_SPACING
+DEVICE_CHANNEL_SPACING = _fdc.DEVICE_CHANNEL_SPACING
 _fdc.configure(SAMPLE_RATE)

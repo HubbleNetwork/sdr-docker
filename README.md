@@ -8,7 +8,7 @@ Live rolling spectrogram and packet decoder for SDR devices.  Streams IQ data,
 displays a real-time spectrogram, decodes packets, and supports full-duplex TX —
 all served as a web dashboard on port **8050**.
 
-Uses [fast-decoder](https://github.com/hubblenetwork/fast-decoder) for packet
+Uses [fast-decoder](https://github.com/hubblenetwork/hubble-satnet-decoder) for packet
 detection and decoding.
 
 ## Supported SDR devices
