@@ -62,7 +62,7 @@ ENV PYTHONUNBUFFERED=1
 
 # Copy source code into the container
 WORKDIR /app
-COPY pyproject.toml /app/
+COPY pyproject.toml README.md /app/
 COPY run_stream.py /app/
 COPY src/ /app/src/
 COPY entrypoint.sh /app/
