@@ -1,14 +1,14 @@
 """Configuration constants for the SDR stream web application.
 
 Protocol constants (RS codes, hopping sequences, preamble patterns, etc.)
-live in ``fast_decoder.constants`` and are re-exported here for backward
+live in ``hubble_satnet_decoder.constants`` and are re-exported here for backward
 compatibility.  SDR-specific and display-specific values are defined locally.
 """
 
 import os
 
-import fast_decoder.constants as _fdc
-from fast_decoder.constants import (  # noqa: F401 — re-exported
+import hubble_satnet_decoder.constants as _fdc
+from hubble_satnet_decoder.constants import (  # noqa: F401 — re-exported
     ADC_FULL_SCALE,
     DATA_LEN_VNEG1,
     DETECTION_THRESHOLD,
@@ -103,7 +103,7 @@ SDR_RETRY_INTERVAL_S = 3
 # -- Time-domain viewer ----------------------------------------------------
 TD_WINDOW_S = 0.5
 
-# -- Sync fast_decoder with this SDR config --------------------------------
+# -- Sync hubble_satnet_decoder with this SDR config -----------------------
 _fdc.CHANNEL_SPACING = 25_750.0
 _fdc.DEVICE_CHANNEL_SPACING = {name: _fdc.CHANNEL_SPACING for name in _fdc.SYNTH_RES}
 CHANNEL_SPACING = _fdc.CHANNEL_SPACING

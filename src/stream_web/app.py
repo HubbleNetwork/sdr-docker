@@ -20,9 +20,9 @@ from collections import deque
 from multiprocessing import shared_memory
 
 import numpy as np
-from fast_decoder import get_chipset_stats, reset_chipset_stats
 from flask import Flask, Response, jsonify, render_template, send_file
 from flask import request as flask_request
+from hubble_satnet_decoder import get_chipset_stats, reset_chipset_stats
 
 from . import config
 from .gnuradio_tx import TX_SOURCE_DIR, TXFlowgraph

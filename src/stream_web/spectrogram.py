@@ -1,4 +1,4 @@
-"""Spectrogram image rendering (computation lives in fast_decoder)."""
+"""Spectrogram image rendering (computation lives in hubble_satnet_decoder)."""
 
 import io
 

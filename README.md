@@ -8,7 +8,7 @@ Live rolling spectrogram and packet decoder for SDR devices.  Streams IQ data,
 displays a real-time spectrogram, decodes packets, and supports full-duplex TX —
 all served as a web dashboard on port **8050**.
 
-Uses [fast-decoder](https://github.com/hubblenetwork/hubble-satnet-decoder) for packet
+Uses [hubble-satnet-decoder](https://github.com/hubblenetwork/hubble-satnet-decoder) for packet
 detection and decoding.
 
 ## Supported SDR devices
@@ -48,11 +48,11 @@ SDR ──gr-soapy──> BufferSink ──> shared-memory IQ buffer ──> 0.5
 
 ```
 src/stream_web/
-├── config.py          # SDR / display constants (protocol constants via fast-decoder)
+├── config.py          # SDR / display constants (protocol constants via hubble-satnet-decoder)
 ├── gnuradio_rx.py     # GNU Radio RX flowgraph: soapy.source → BufferSink
 ├── gnuradio_tx.py     # GNU Radio TX flowgraph: soapy.sink (tone / packet file)
 ├── sdr.py             # Re-exports rx_loop
-├── spectrogram.py     # Spectrogram image rendering (computation via fast-decoder)
+├── spectrogram.py     # Spectrogram image rendering (computation via hubble-satnet-decoder)
 ├── processor.py       # Processing loop (runs in separate OS process)
 ├── app.py             # Flask app, RX/TX routes, API endpoints, orchestration
 ├── templates/
@@ -67,7 +67,7 @@ The application has two layers of dependencies:
 
 | Layer | What | How to install |
 |-------|------|----------------|
-| **Python packages** (pip) | fast-decoder, flask, numpy, scipy, matplotlib, Pillow | `pip install -e .` |
+| **Python packages** (pip) | hubble-satnet-decoder, flask, numpy, scipy, matplotlib, Pillow | `pip install -e .` |
 | **System libraries** (apt / brew / source) | GNU Radio >= 3.9, SoapySDR, per-device SoapySDR modules, device libraries | See platform-specific sections below |
 
 GNU Radio and SoapySDR ship Python bindings that are installed system-wide

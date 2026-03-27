@@ -19,7 +19,7 @@ docker run -p 8050:8050 sdr-docker
 
 ## Project structure
 
-- `src/stream_web/config.py` — SDR and display configuration (protocol constants via fast-decoder)
+- `src/stream_web/config.py` — SDR and display configuration (protocol constants via hubble-satnet-decoder)
 - `src/stream_web/gnuradio_rx.py` — GNU Radio RX flowgraph using gr-soapy
 - `src/stream_web/gnuradio_tx.py` — GNU Radio TX flowgraph using gr-soapy (full-duplex)
 - `src/stream_web/spectrogram.py` — spectrogram image rendering (PIL/matplotlib)
@@ -29,7 +29,7 @@ docker run -p 8050:8050 sdr-docker
 
 ## Key dependencies
 
-- **fast-decoder** — preamble detection, FSK decoding, protocol constants
+- **hubble-satnet-decoder** — preamble detection, FSK decoding, protocol constants
 - **GNU Radio + gr-soapy** — unified SDR RX/TX (system-level, not pip)
 - **Flask** — web server and API
 
@@ -37,5 +37,5 @@ docker run -p 8050:8050 sdr-docker
 
 - Hatchling build with `src` layout
 - Ruff is the sole linter
-- Protocol constants come from `fast_decoder.constants`; SDR/display config stays in `config.py`
+- Protocol constants come from `hubble_satnet_decoder.constants`; SDR/display config stays in `config.py`
 - `config.py` re-exports protocol constants for backward compatibility

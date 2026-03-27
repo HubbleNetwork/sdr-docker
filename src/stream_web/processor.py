@@ -13,7 +13,7 @@ from collections import deque
 from multiprocessing import shared_memory
 
 import numpy as np
-from fast_decoder import compute_spec_chunk, decode_signal
+from hubble_satnet_decoder import compute_spec_chunk, decode_signal
 
 from . import config
 from .spectrogram import render_spec_image, render_td_plot
