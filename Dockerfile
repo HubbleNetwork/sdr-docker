@@ -74,7 +74,7 @@ COPY entrypoint.sh /app/
 # (blinker, etc.) can't be pip-uninstalled cleanly.
 RUN python3 -m pip install --upgrade pip setuptools wheel
 RUN python3 -m pip install --ignore-installed \
-    "hubble-satnet-decoder @ git+https://github.com/hubblenetwork/hubble-satnet-decoder.git" \
+    "hubble-satnet-decoder>=1.0.0" \
     "numpy>=1.26,<2"
 RUN python3 -m pip install --ignore-installed -e . "numpy>=1.26,<2"
 
