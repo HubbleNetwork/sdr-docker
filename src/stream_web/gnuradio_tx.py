@@ -30,7 +30,10 @@ TX_DEFAULT_FREQ_HZ: int = config.CENTER_FREQ_HZ
 TX_DEFAULT_ATTENUATION_DB: float = 0.0
 TX_SAMPLE_RATE: int = config.SAMPLE_RATE
 TX_BANDWIDTH: int = config.RF_BANDWIDTH
-TX_SOURCE_DIR: str = os.environ.get("TX_SOURCE_DIR", "/app/source_files")
+TX_SOURCE_DIR: str = os.environ.get(
+    "TX_SOURCE_DIR", os.path.join(os.path.dirname(__file__), "source_files")
+)
+os.makedirs(TX_SOURCE_DIR, exist_ok=True)
 
 
 # ---------------------------------------------------------------------------

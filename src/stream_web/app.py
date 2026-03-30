@@ -479,6 +479,58 @@ def api_tx_status():
     return jsonify(tx_fg.status_dict())
 
 
+TX_MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB
+
+
+def _file_sha256(path: str) -> str:
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(131072), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+@app.route("/api/tx/files", methods=["GET"])
+def api_tx_files_list():
+    files = []
+    for name in sorted(os.listdir(TX_SOURCE_DIR)):
+        path = os.path.join(TX_SOURCE_DIR, name)
+        if os.path.isfile(path):
+            files.append({
+                "name": name,
+                "size": os.path.getsize(path),
+                "sha256": _file_sha256(path),
+            })
+    return jsonify(files=files)
+
+
+@app.route("/api/tx/files", methods=["POST"])
+def api_tx_files_upload():
+    if "file" not in flask_request.files:
+        return jsonify(error="No 'file' field in request"), 400
+    f = flask_request.files["file"]
+    if not f.filename:
+        return jsonify(error="Empty filename"), 400
+    name = os.path.basename(f.filename)
+    data = f.read()
+    if len(data) > TX_MAX_UPLOAD_BYTES:
+        return jsonify(error=f"File exceeds {TX_MAX_UPLOAD_BYTES} byte limit"), 413
+    dest = os.path.join(TX_SOURCE_DIR, name)
+    with open(dest, "wb") as out:
+        out.write(data)
+    return jsonify(name=name, size=len(data), sha256=_file_sha256(dest))
+
+
+@app.route("/api/tx/files/<filename>", methods=["DELETE"])
+def api_tx_files_delete(filename):
+    path = os.path.join(TX_SOURCE_DIR, os.path.basename(filename))
+    if not os.path.isfile(path):
+        return jsonify(error="File not found"), 404
+    os.remove(path)
+    return jsonify(deleted=filename)
+
+
 # ===========================================================================
 # Result drainer — receives processor output via mp.Queue
 # ===========================================================================

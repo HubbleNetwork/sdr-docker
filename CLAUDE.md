@@ -21,10 +21,10 @@ docker run -p 8050:8050 sdr-docker
 
 - `src/stream_web/config.py` — SDR and display configuration (protocol constants via hubble-satnet-decoder)
 - `src/stream_web/gnuradio_rx.py` — GNU Radio RX flowgraph using gr-soapy
-- `src/stream_web/gnuradio_tx.py` — GNU Radio TX flowgraph using gr-soapy (full-duplex)
+- `src/stream_web/gnuradio_tx.py` — GNU Radio TX flowgraph using gr-soapy (full-duplex, tone + IQ file playback)
 - `src/stream_web/spectrogram.py` — spectrogram image rendering (PIL/matplotlib)
 - `src/stream_web/processor.py` — decode + spectrogram loop (separate OS process)
-- `src/stream_web/app.py` — Flask web app, API routes, process orchestration
+- `src/stream_web/app.py` — Flask web app, API routes (RX/TX/file upload), process orchestration
 - `run_stream.py` — entry point
 
 ## Key dependencies
@@ -32,6 +32,23 @@ docker run -p 8050:8050 sdr-docker
 - **hubble-satnet-decoder** — preamble detection, FSK decoding, protocol constants
 - **GNU Radio + gr-soapy** — unified SDR RX/TX (system-level, not pip)
 - **Flask** — web server and API
+
+## API endpoints
+
+### RX
+- `GET /api/status` — system status, RX metrics, peak power
+- `GET /api/packets` — poll-and-drain decoded packets (NDJSON)
+
+### TX
+- `POST /api/tx/start` — start TX (`{"mode":"tone"}` or `{"mode":"packet","file":"<name>"}`)
+- `POST /api/tx/stop` — stop TX
+- `GET /api/tx/status` — current TX state
+- `POST /api/tx/gain` — set TX gain (`{"gain_db": 0}`)
+
+### TX file management
+- `POST /api/tx/files` — upload IQ binary file (multipart, max 50 MB), returns `{filename, size_bytes, sha256}`
+- `GET /api/tx/files` — list available TX files with size and SHA256
+- `DELETE /api/tx/files/<filename>` — delete a TX file
 
 ## Conventions
 

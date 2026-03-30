@@ -1,7 +1,7 @@
 # sdr-docker
 
-[![CI](https://github.com/hubblenetwork/pluto-sdr-docker/actions/workflows/ci.yml/badge.svg)](https://github.com/hubblenetwork/pluto-sdr-docker/actions/workflows/ci.yml)
-[![Docker](https://github.com/hubblenetwork/pluto-sdr-docker/actions/workflows/docker.yml/badge.svg)](https://github.com/hubblenetwork/pluto-sdr-docker/actions/workflows/docker.yml)
+[![CI](https://github.com/HubbleNetwork/sdr-docker/actions/workflows/ci.yml/badge.svg)](https://github.com/HubbleNetwork/sdr-docker/actions/workflows/ci.yml)
+[![Docker](https://github.com/HubbleNetwork/sdr-docker/actions/workflows/docker.yml/badge.svg)](https://github.com/HubbleNetwork/sdr-docker/actions/workflows/docker.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 Live rolling spectrogram and packet decoder for SDR devices.  Streams IQ data,
@@ -128,9 +128,9 @@ groups | grep docker
 ### 2. Clone and build
 
 ```shell
-git clone <repo-url>
-cd pluto-sdr-docker/
-docker build -t pluto_container .
+git clone https://github.com/HubbleNetwork/sdr-docker.git
+cd sdr-docker/
+docker build -t sdr-docker .
 ```
 
 > **Non-x86 architectures:** download the correct libiio `.deb` from
@@ -145,14 +145,20 @@ No special flags needed — the container reaches Pluto at `192.168.2.1` via the
 host network stack:
 
 ```shell
-docker run --restart unless-stopped -d -p 8050:8050 pluto_container
+docker run --restart unless-stopped -d -p 8050:8050 sdr-docker
+```
+
+Or use the pre-built image from GitHub Container Registry:
+
+```shell
+docker run --restart unless-stopped -d -p 8050:8050 ghcr.io/hubblenetwork/sdr-docker:latest
 ```
 
 To use a different Pluto IP:
 
 ```shell
 docker run --restart unless-stopped -d -p 8050:8050 \
-  -e PLUTO_URI=ip:192.168.3.1 pluto_container
+  -e PLUTO_URI=ip:192.168.3.1 sdr-docker
 ```
 
 #### PlutoSDR over USB
@@ -163,7 +169,7 @@ Pass the USB bus into the container:
 docker run --restart unless-stopped -d -p 8050:8050 \
   --privileged \
   -e PLUTO_URI=usb: \
-  pluto_container
+  sdr-docker
 ```
 
 Or, for tighter security, map only `/dev/bus/usb`:
@@ -172,7 +178,7 @@ Or, for tighter security, map only `/dev/bus/usb`:
 docker run --restart unless-stopped -d -p 8050:8050 \
   --device=/dev/bus/usb \
   -e PLUTO_URI=usb: \
-  pluto_container
+  sdr-docker
 ```
 
 #### bladeRF Micro A4 (USB)
@@ -181,7 +187,7 @@ docker run --restart unless-stopped -d -p 8050:8050 \
 docker run --restart unless-stopped -d -p 8050:8050 \
   --privileged \
   -e SDR_TYPE=bladerf \
-  pluto_container
+  sdr-docker
 ```
 
 > The container's entrypoint automatically loads the bladeRF FPGA bitstream
@@ -193,7 +199,7 @@ docker run --restart unless-stopped -d -p 8050:8050 \
 ### 4. Docker Compose (development)
 
 ```shell
-docker build -t pluto_container .
+docker build -t sdr-docker .
 
 # PlutoSDR over Ethernet (default):
 docker compose up
@@ -328,7 +334,7 @@ Use a venv with `--system-site-packages` so the Homebrew-installed GNU Radio
 and SoapySDR Python bindings are visible inside the venv:
 
 ```shell
-cd pluto-sdr-docker/
+cd sdr-docker/
 python3 -m venv --system-site-packages .venv
 source .venv/bin/activate
 pip install -e .
@@ -456,7 +462,7 @@ Verify with `SoapySDRUtil --info` — you should see `plutosdr` and/or
 ### Install and run
 
 ```shell
-cd pluto-sdr-docker/
+cd sdr-docker/
 
 # --system-site-packages is required so the venv can see
 # GNU Radio and SoapySDR Python bindings installed by apt
@@ -567,6 +573,50 @@ curl -s http://localhost:8050/api/packets | jq 'select(.device_id == "0xBBAABB01
 
 # Monitor in real-time with watch
 watch -n 2 'curl -s http://localhost:8050/api/packets | jq .'
+```
+
+### TX API
+
+Full-duplex TX runs simultaneously with RX.  All TX endpoints live under `/api/tx/`.
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/tx/start` | POST | Start transmitting. Body: `{"mode":"tone"}` for CW carrier, or `{"mode":"packet","file":"<name>","repeat":true}` for IQ file playback |
+| `/api/tx/stop` | POST | Stop transmitting |
+| `/api/tx/status` | GET | Current TX state (running, mode, freq, attenuation) |
+| `/api/tx/freq` | GET/POST | Get or set TX frequency. POST body: `{"freq_hz": 2482440375}` |
+| `/api/tx/attn` | GET/POST | Get or set TX attenuation. POST body: `{"attn_db": 0}` (0 = max power) |
+| `/api/tx/files` | GET | List available TX IQ files with name, size, and SHA256 hash |
+| `/api/tx/files` | POST | Upload an IQ binary file (multipart form, max 50 MB). Returns `{name, size, sha256}` |
+| `/api/tx/files/<name>` | DELETE | Delete a TX file |
+
+**CLI examples:**
+
+```bash
+# Start a CW tone at max power
+curl -X POST http://localhost:8050/api/tx/start \
+  -H 'Content-Type: application/json' -d '{"mode":"tone"}'
+
+# Set attenuation to 0 dB (max power)
+curl -X POST http://localhost:8050/api/tx/attn \
+  -H 'Content-Type: application/json' -d '{"attn_db": 0}'
+
+# Upload an IQ file for TX
+curl -X POST http://localhost:8050/api/tx/files -F "file=@my_waveform.bin"
+
+# List available TX files
+curl -s http://localhost:8050/api/tx/files | jq .
+
+# Start packet TX from an uploaded file
+curl -X POST http://localhost:8050/api/tx/start \
+  -H 'Content-Type: application/json' \
+  -d '{"mode":"packet","file":"my_waveform.bin"}'
+
+# Stop TX
+curl -X POST http://localhost:8050/api/tx/stop
+
+# Delete a TX file
+curl -X DELETE http://localhost:8050/api/tx/files/my_waveform.bin
 ```
 
 ---
