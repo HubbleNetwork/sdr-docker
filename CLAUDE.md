@@ -46,7 +46,7 @@ docker run -p 8050:8050 sdr-docker
 - `POST /api/tx/gain` — set TX gain (`{"gain_db": 0}`)
 
 ### TX file management
-- `POST /api/tx/files` — upload IQ binary file (multipart, max 50 MB), returns `{filename, size_bytes, sha256}`
+- `POST /api/tx/files` — upload IQ binary file (multipart, max 1 GB), returns `{filename, size_bytes, sha256}`
 - `GET /api/tx/files` — list available TX files with size and SHA256
 - `DELETE /api/tx/files/<filename>` — delete a TX file
 

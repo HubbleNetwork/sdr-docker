@@ -587,7 +587,7 @@ Full-duplex TX runs simultaneously with RX.  All TX endpoints live under `/api/t
 | `/api/tx/freq` | GET/POST | Get or set TX frequency. POST body: `{"freq_hz": 2482440375}` |
 | `/api/tx/attn` | GET/POST | Get or set TX attenuation. POST body: `{"attn_db": 0}` (0 = max power) |
 | `/api/tx/files` | GET | List available TX IQ files with name, size, and SHA256 hash |
-| `/api/tx/files` | POST | Upload an IQ binary file (multipart form, max 50 MB). Returns `{name, size, sha256}` |
+| `/api/tx/files` | POST | Upload an IQ binary file (multipart form, max 1 GB). Returns `{name, size, sha256}` |
 | `/api/tx/files/<name>` | DELETE | Delete a TX file |
 
 **CLI examples:**
