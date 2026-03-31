@@ -20,9 +20,9 @@ from collections import deque
 from multiprocessing import shared_memory
 
 import numpy as np
+from hubble_satnet_decoder import get_chipset_stats, reset_chipset_stats
 from flask import Flask, Response, jsonify, render_template, send_file
 from flask import request as flask_request
-from hubble_satnet_decoder import reset_chipset_stats
 
 from . import config
 from .gnuradio_tx import TX_SOURCE_DIR, TXFlowgraph
@@ -80,6 +80,9 @@ class SharedState:
         # td_target_chipset needs a string; use a fixed-size mp.Array
         self._td_chipset_arr = mp.Array("c", 32)
 
+        # --- capture next successful decode IQ (one-shot trigger) ---
+        self._capture_next_iq = mp.Value("b", 0)
+
         # --- drop positions (RX→processor, lock-free via mp.Queue) ---
         self.drop_queue: mp.Queue = mp.Queue()
 
@@ -102,6 +105,13 @@ class SharedState:
         self.td_status: str = ""
         self.td_decode_info: dict | None = None
         self.td_iq_segment: np.ndarray | None = None
+        self.chipset_stats: dict = {}
+
+        # --- capture-next IQ (separate from timedomain) ---
+        self.captured_iq_segment: np.ndarray | None = None
+        self.captured_iq_info: dict | None = None
+
+        # --- chipset stats ---
         self.chipset_stats: dict = {}
 
     def cleanup_shm(self):
@@ -183,6 +193,14 @@ class SharedState:
     @td_target_chipset.setter
     def td_target_chipset(self, v):
         self._td_chipset_arr.value = (v or "").encode()[:31]
+
+    @property
+    def capture_next_iq(self):
+        return bool(self._capture_next_iq.value)
+
+    @capture_next_iq.setter
+    def capture_next_iq(self, v):
+        self._capture_next_iq.value = int(bool(v))
 
     # legacy compat — RX pushes drop positions via queue now
     @property
@@ -388,6 +406,41 @@ def api_td_info():
     return jsonify(info)
 
 
+@app.route("/api/capture_iq", methods=["GET", "POST"])
+def api_capture_iq():
+    """Arm (POST) or retrieve (GET) IQ capture from successful decode."""
+    if flask_request.method == "POST":
+        # Clear previous capture and arm for next
+        with state.lock:
+            state.captured_iq_segment = None
+            state.captured_iq_info = None
+        state.capture_next_iq = True
+        return jsonify(armed=True)
+    else:
+        # GET - retrieve captured IQ
+        with state.lock:
+            seg = state.captured_iq_segment
+        if seg is None:
+            return jsonify(error="No IQ capture available"), 404
+        buf = io.BytesIO()
+        np.save(buf, seg)
+        buf.seek(0)
+        return send_file(
+            buf, mimetype="application/octet-stream",
+            as_attachment=True, download_name="capture.npy",
+        )
+
+
+@app.route("/api/capture_iq/info", methods=["GET"])
+def api_capture_iq_info():
+    """Get decode info for the captured IQ."""
+    with state.lock:
+        info = state.captured_iq_info
+    if info is None:
+        return jsonify(error="No capture available"), 404
+    return jsonify(info)
+
+
 @app.route("/api/packets", methods=["GET"])
 def api_packets():
     """Poll-and-drain: return all decodes since last call as JSONL, then clear.
@@ -580,6 +633,10 @@ def _drain_results(state):
                 state.td_decode_info = r["td_decode_info"]
             if r.get("td_iq_segment") is not None:
                 state.td_iq_segment = r["td_iq_segment"]
+            if r.get("captured_iq_segment") is not None:
+                state.captured_iq_segment = r["captured_iq_segment"]
+            if r.get("captured_iq_info") is not None:
+                state.captured_iq_info = r["captured_iq_info"]
 
 
 # ===========================================================================
@@ -603,6 +660,7 @@ def main():
             state._td_target_ntw_id,
             state._td_has_ntw_id,
             state._td_chipset_arr,
+            state._capture_next_iq,
             state.running,
             state.drop_queue,
             state.result_queue,

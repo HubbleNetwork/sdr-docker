@@ -22,7 +22,7 @@ from .spectrogram import render_spec_image, render_td_plot
 def processor_main(shm_name, buf_write_idx_val, rx_peak_frac_val,
                    rx_overflows_val, rx_gain_dB_val, td_running_val,
                    td_ntw_id_val, td_has_ntw_val, td_chipset_arr,
-                   running_event, drop_queue, result_queue):
+                   capture_next_iq_val, running_event, drop_queue, result_queue):
     """Entry point for the processor process."""
 
     shm = shared_memory.SharedMemory(name=shm_name, create=False)
@@ -31,6 +31,7 @@ def processor_main(shm_name, buf_write_idx_val, rx_peak_frac_val,
 
     spec_chunks: deque = deque(maxlen=config.MAX_SPEC_CHUNKS)
     detection_history: list[dict] = []
+    last_chunk_end_time: float = 0.0  # Track when last decode chunk ended
 
     buf_len = config.IQ_BUFFER_SIZE
 
@@ -80,6 +81,7 @@ def processor_main(shm_name, buf_write_idx_val, rx_peak_frac_val,
         # 2) Decode
         t_dec0 = time.perf_counter()
         decode_chunk = _extract_last(config.DECODE_SAMPLES)
+        chunk_end_time = time.time()  # Record when this chunk ends for accurate timestamps
         try:
             packets, detections, attempts = decode_signal(decode_chunk)
         except Exception as e:
@@ -144,14 +146,19 @@ def processor_main(shm_name, buf_write_idx_val, rx_peak_frac_val,
         dt_ms = (time.perf_counter() - t0) * 1000
 
         ts = time.strftime("%H:%M:%S")
-        unix_ts = time.time()
         decode_entries = []
         for pkt in packets:
+            # Per-packet accurate timestamp: chunk_end_time - window + position
+            pkt_unix_ts = chunk_end_time - config.DECODE_WINDOW_S + pkt['time_s']
+
+            # Skip packets that were already in the previous window's emit region
+            if last_chunk_end_time > 0 and pkt_unix_ts < last_chunk_end_time:
+                continue
             ver = pkt["phy_ver"]
             ntw_hex = f"0x{pkt['ntw_id']:09X}" if ver == -1 else f"0x{pkt['ntw_id']:08X}"
             decode_entries.append({
                 "timestamp": ts,
-                "unix_ts": unix_ts,
+                "unix_ts": pkt_unix_ts,
                 "phy_ver": ver,
                 "ntw_id": pkt["ntw_id"],
                 "ntw_id_hex": ntw_hex,
@@ -166,6 +173,9 @@ def processor_main(shm_name, buf_write_idx_val, rx_peak_frac_val,
                 "pdu_n_corr": pkt.get("pdu_n_corr"),
                 "num_pdu_symbols": pkt.get("num_pdu_symbols"),
             })
+
+        # Update for next cycle's overlap detection
+        last_chunk_end_time = chunk_end_time
 
         stats = {
             "process_time_ms": round(dt_ms, 1),
@@ -184,6 +194,35 @@ def processor_main(shm_name, buf_write_idx_val, rx_peak_frac_val,
         td_status_str = None
         td_decode_info_out = None
         td_iq_seg_out = None
+
+        # 5a) Capture-next-IQ: one-shot capture of next successful decode
+        captured_iq_seg_out = None
+        captured_iq_info_out = None
+        if capture_next_iq_val.value and packets:
+            pkt = packets[0]
+            cap_samples = int(config.TD_WINDOW_S * config.SAMPLE_RATE)
+            pkt_start = int(round(pkt["time_s"] * config.SAMPLE_RATE))
+            cap_start = max(0, pkt_start - cap_samples // 5)
+            cap_end = cap_start + cap_samples
+            if cap_end <= len(decode_chunk):
+                captured_iq_seg_out = decode_chunk[cap_start:cap_end].copy()
+                captured_iq_info_out = {
+                    "decoded": True,
+                    "reason": "ok",
+                    "time_s": pkt["time_s"],
+                    "start_sample": pkt_start - cap_start,
+                    "ntw_id": pkt["ntw_id"],
+                    "seq_num": pkt["seq_num"],
+                    "energy_dB": round(pkt["total_energy_dB"], 1),
+                    "chipset": pkt.get("chipset", ""),
+                    "phy_ver": pkt["phy_ver"],
+                    "channel_num": pkt.get("channel_num"),
+                    "hop_seq_idx": pkt.get("hop_seq_idx"),
+                    "num_pdu_symbols": pkt.get("num_pdu_symbols"),
+                    "payload_bytes": pkt.get("payload_bytes"),
+                    "payload_val": pkt.get("payload_val"),
+                }
+                capture_next_iq_val.value = 0  # Clear the flag
 
         td_on = bool(td_running_val.value)
         td_chipset_raw = td_chipset_arr.value
@@ -275,6 +314,8 @@ def processor_main(shm_name, buf_write_idx_val, rx_peak_frac_val,
             "td_status": td_status_str,
             "td_decode_info": td_decode_info_out,
             "td_iq_segment": td_iq_seg_out,
+            "captured_iq_segment": captured_iq_seg_out,
+            "captured_iq_info": captured_iq_info_out,
         }
         try:
             result_queue.put_nowait(result)
