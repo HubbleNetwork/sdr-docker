@@ -22,7 +22,7 @@ from multiprocessing import shared_memory
 import numpy as np
 from flask import Flask, Response, jsonify, render_template, send_file
 from flask import request as flask_request
-from hubble_satnet_decoder import get_chipset_stats, reset_chipset_stats
+from hubble_satnet_decoder import reset_chipset_stats
 
 from . import config
 from .gnuradio_tx import TX_SOURCE_DIR, TXFlowgraph
@@ -102,6 +102,7 @@ class SharedState:
         self.td_status: str = ""
         self.td_decode_info: dict | None = None
         self.td_iq_segment: np.ndarray | None = None
+        self.chipset_stats: dict = {}
 
     def cleanup_shm(self):
         try:
@@ -271,7 +272,20 @@ def api_status():
         if state.td_latest_img:
             td_b64 = base64.b64encode(state.td_latest_img).decode("ascii")
 
-        cs_stats = get_chipset_stats()
+        cs_stats = dict(state.chipset_stats)
+
+        rs_by_chipset: dict[str, list[float]] = {}
+        for r in state.decode_results:
+            chip = r.get("chipset", "")
+            if not chip:
+                continue
+            n = r.get("pdu_n_corr")
+            total = r.get("num_pdu_symbols")
+            if n is not None and total:
+                rs_by_chipset.setdefault(chip, []).append(100.0 * n / total)
+        for chip, pcts in rs_by_chipset.items():
+            if chip in cs_stats:
+                cs_stats[chip]["avg_rs_corr_pct"] = round(sum(pcts) / len(pcts), 1)
 
         return jsonify(
             devices=dev_list, stats=stats,
@@ -295,6 +309,7 @@ def api_reset():
             t_spec_ms=0, t_render_ms=0, t_decode_ms=0,
         )
         reset_chipset_stats()
+        state.chipset_stats.clear()
         state.detection_history = []
     return jsonify(ok=True)
 
@@ -555,6 +570,8 @@ def _drain_results(state):
                 state.packet_feed[:] = state.packet_feed[-1000:]
             if r.get("stats"):
                 state.decode_stats = r["stats"]
+            if r.get("chipset_stats"):
+                state.chipset_stats = r["chipset_stats"]
             if r.get("td_img") is not None:
                 state.td_latest_img = r["td_img"]
             if r.get("td_status") is not None:

@@ -94,6 +94,87 @@ def render_spec_image(chunks: list[np.ndarray], detections: list[dict] | None = 
 # Time-domain plot rendering
 # ===========================================================================
 
+
+def _draw_decoder_overlay(ax, decode_info: dict):
+    """Draw start line, hop boundaries, and expected channel F0 on spectrogram."""
+    sr = config.SAMPLE_RATE
+    start = decode_info["start_sample"]
+    slot = config.slot_samples[1]["slot"]
+    F0 = decode_info.get("F0_hz")
+    channel_num = decode_info.get("channel_num")
+    hop_seq_idx = decode_info.get("hop_seq_idx")
+    chipset = decode_info.get("chipset")
+    num_pdu = decode_info.get("num_pdu_symbols", 0)
+
+    if F0 is None or channel_num is None or hop_seq_idx is None:
+        return
+    if hop_seq_idx >= len(config.HOPPING_SEQS):
+        return
+
+    synth_res = config.SYNTH_RES.get(chipset, 400.0)
+    q_step = round(config.CHANNEL_SPACING / abs(synth_res)) * abs(synth_res)
+    hop_seq = config.HOPPING_SEQS[hop_seq_idx]
+    try:
+        hop_index = hop_seq.index(channel_num)
+    except ValueError:
+        return
+
+    preamble_len = config.PREAMBLE_LEN
+    header_len = config.NUM_HEADER_SYMS
+    sym_per_hop = config.NUM_SYM_PER_HOP
+    total_syms = preamble_len + header_len + num_pdu
+    half_sym = config.samples_per_symbol / 2
+
+    # Signal start line (center of the first FFT window)
+    t_start_ms = (start + half_sym) / sr * 1e3
+    ax.axvline(t_start_ms, color="#3399ff", linewidth=2.5, linestyle="--",
+               alpha=1.0, label="start")
+    ax.text(t_start_ms, ax.get_ylim()[1], " start", color="#3399ff",
+            fontsize=8, fontweight="bold", va="top", ha="left",
+            fontfamily="monospace")
+
+    # Walk through hops and draw boundaries + channel F0 lines
+    cur_ch = channel_num
+    f0_cur = F0
+    hop_boundary_syms = set()
+    segments = []  # (sym_start, sym_end, channel, f0)
+    seg_start = 0
+
+    for sym_abs in range(total_syms + 1):
+        nxt = hop_seq[
+            (hop_index + sym_abs // sym_per_hop) % len(hop_seq)
+        ]
+        if nxt != cur_ch:
+            segments.append((seg_start, sym_abs, cur_ch, f0_cur))
+            hop_boundary_syms.add(sym_abs)
+            f0_cur += (nxt - cur_ch) * q_step
+            cur_ch = nxt
+            seg_start = sym_abs
+    segments.append((seg_start, total_syms, cur_ch, f0_cur))
+
+    color = "#3399ff"
+
+    for i, (s_sym, e_sym, ch, f0_ch) in enumerate(segments):
+        t0_ms = (start + s_sym * slot + half_sym) / sr * 1e3
+        t1_ms = (start + e_sym * slot + half_sym) / sr * 1e3
+
+        # Hop boundary vertical line
+        if s_sym in hop_boundary_syms:
+            ax.axvline(t0_ms, color=color, linewidth=2.0, linestyle=":",
+                       alpha=1.0)
+
+        # Horizontal line at F0 (bin 0) for this channel
+        f0_khz = f0_ch / 1e3
+        f63_khz = (f0_ch + 63 * abs(synth_res)) / 1e3
+        ax.hlines(f0_khz, t0_ms, t1_ms, colors=color, linewidth=2.5,
+                  alpha=1.0, linestyle="-")
+        ax.hlines(f63_khz, t0_ms, t1_ms, colors=color, linewidth=2.0,
+                  alpha=0.9, linestyle="--")
+        ax.text(t0_ms + 0.5, f63_khz + 2, f"ch{ch}",
+                color=color, fontsize=8, fontweight="bold",
+                fontfamily="monospace", va="bottom", ha="left", alpha=1.0)
+
+
 def render_td_plot(iq_segment: np.ndarray, decode_info: dict | None = None) -> bytes:
     """Render a time-domain magnitude plot + spectrogram with annotations."""
     n = len(iq_segment)
@@ -306,6 +387,10 @@ def render_td_plot(iq_segment: np.ndarray, decode_info: dict | None = None) -> b
     for spine in ax_sg.spines.values():
         spine.set_color("#333")
     ax_sg.set_xlim(t_ms[0], t_ms[-1])
+
+    # --- Decoder overlay: start, hop boundaries, expected channel F0 ---
+    if decode_info and decode_info.get("start_sample") is not None:
+        _draw_decoder_overlay(ax_sg, decode_info)
 
     fig.tight_layout(pad=0.5)
 

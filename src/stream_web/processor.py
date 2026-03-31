@@ -13,7 +13,7 @@ from collections import deque
 from multiprocessing import shared_memory
 
 import numpy as np
-from hubble_satnet_decoder import compute_spec_chunk, decode_signal
+from hubble_satnet_decoder import compute_spec_chunk, decode_signal, get_chipset_stats
 
 from . import config
 from .spectrogram import render_spec_image, render_td_plot
@@ -162,6 +162,9 @@ def processor_main(shm_name, buf_write_idx_val, rx_peak_frac_val,
                 "freq_delta_hz": pkt.get("freq_delta_hz"),
                 "payload_val": pkt.get("payload_val"),
                 "payload_bytes": pkt.get("payload_bytes"),
+                "header_n_corr": pkt.get("header_n_corr"),
+                "pdu_n_corr": pkt.get("pdu_n_corr"),
+                "num_pdu_symbols": pkt.get("num_pdu_symbols"),
             })
 
         stats = {
@@ -227,6 +230,8 @@ def processor_main(shm_name, buf_write_idx_val, rx_peak_frac_val,
                     decode_info = dict(td_hit)
                     decode_info.setdefault("decoded", False)
                     decode_info.setdefault("reason", "unknown")
+                    if "start_sample" in decode_info:
+                        decode_info["start_sample"] -= td_start
                     if not decode_info.get("energy_dB"):
                         decode_info["energy_dB"] = td_hit.get("total_energy_dB")
                     try:
@@ -265,6 +270,7 @@ def processor_main(shm_name, buf_write_idx_val, rx_peak_frac_val,
             "detections": detections,
             "decode_entries": decode_entries,
             "stats": stats,
+            "chipset_stats": get_chipset_stats(),
             "td_img": td_img,
             "td_status": td_status_str,
             "td_decode_info": td_decode_info_out,

@@ -57,15 +57,14 @@
       <thead>
         <tr>
           <th>Chipset</th>
-          <th>Detected</th>
-          <th>Decoded</th>
-          <th>Header Fail</th>
-          <th>PDU Fail</th>
-          <th>Rate</th>
+          <th title="Packets that passed header decode (confirmed real packets)">Packets</th>
+          <th title="Successfully decoded (header + PDU)">Decoded</th>
+          <th title="Decoded / Packets">Decode %</th>
+          <th title="Average % of PDU symbols corrected by RS (lower is better)">RS Corr %</th>
         </tr>
       </thead>
       <tbody id="cs-body">
-        <tr><td colspan="7" class="no-data">Waiting for data&hellip;</td></tr>
+        <tr><td colspan="5" class="no-data">Waiting for data&hellip;</td></tr>
       </tbody>
     </table>
   </div>
@@ -224,15 +223,16 @@
             var h = '';
             for (var j = 0; j < chips.length; j++) {
               var c = chips[j], s = cs[c];
-              var rate = s.detected > 0 ? (100 * s.ok / s.detected).toFixed(1) + '%' : '\u2014';
-              var rCls = s.detected > 0 && (s.ok / s.detected) >= 0.5 ? 'c-id' : 'c-nrg';
+              var packets = s.ok + s.pdu_fail;
+              var rate = packets > 0 ? (100 * s.ok / packets).toFixed(1) + '%' : '\u2014';
+              var rCls = packets > 0 && (s.ok / packets) >= 0.5 ? 'c-id' : 'c-nrg';
+              var avgRs = s.avg_rs_corr_pct != null ? s.avg_rs_corr_pct.toFixed(1) + '%' : '\u2014';
               h += '<tr>'
                 + '<td class="c-chip">' + c + '</td>'
-                + '<td>' + s.detected + '</td>'
+                + '<td>' + packets + '</td>'
                 + '<td class="c-id">' + s.ok + '</td>'
-                + '<td class="c-nrg">' + s.header_fail + '</td>'
-                + '<td class="c-nrg">' + s.pdu_fail + '</td>'
                 + '<td class="' + rCls + '">' + rate + '</td>'
+                + '<td>' + avgRs + '</td>'
                 + '</tr>';
             }
             document.getElementById('cs-body').innerHTML = h;
@@ -292,7 +292,7 @@
       fetch('/api/reset', { method: 'POST' }).then(function() {
         tbody.innerHTML = '<tr><td colspan="8" class="no-data">Cleared.</td></tr>';
         document.getElementById('cs-body').innerHTML =
-          '<tr><td colspan="8" class="no-data">Cleared.</td></tr>';
+          '<tr><td colspan="5" class="no-data">Cleared.</td></tr>';
       });
     }
 
