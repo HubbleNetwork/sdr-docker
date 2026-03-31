@@ -105,7 +105,10 @@ TD_WINDOW_S = 0.5
 
 # -- Sync hubble_satnet_decoder with this SDR config -----------------------
 _fdc.CHANNEL_SPACING = 25_750.0
-_fdc.DEVICE_CHANNEL_SPACING = {name: _fdc.CHANNEL_SPACING for name in _fdc.SYNTH_RES}
+_fdc.DEVICE_CHANNEL_SPACING = {
+    name: round(_fdc.CHANNEL_SPACING / sr) * sr
+    for name, sr in _fdc.SYNTH_RES.items()
+}
 CHANNEL_SPACING = _fdc.CHANNEL_SPACING
 DEVICE_CHANNEL_SPACING = _fdc.DEVICE_CHANNEL_SPACING
 _fdc.configure(SAMPLE_RATE)
