@@ -27,9 +27,19 @@ from flask import request as flask_request
 from hubble_satnet_decoder import reset_chipset_stats
 
 from . import config
-from .gnuradio_tx import TX_SOURCE_DIR, TXFlowgraph
 from .processor import processor_main
-from .sdr import rx_loop
+
+# GNU Radio imports — deferred so the app can be imported without GNU Radio
+# installed (e.g. SDR_TYPE=mock, CI tests).
+try:
+    from .gnuradio_tx import TX_SOURCE_DIR, TXFlowgraph
+    from .sdr import rx_loop
+except ImportError:
+    TX_SOURCE_DIR = os.environ.get(
+        "TX_SOURCE_DIR", os.path.join(os.path.dirname(__file__), "source_files")
+    )
+    TXFlowgraph = None  # type: ignore[assignment,misc]
+    rx_loop = None  # type: ignore[assignment]
 
 # ===========================================================================
 # Shared application state
@@ -197,7 +207,7 @@ class SharedState:
 
 
 state = SharedState()
-tx_fg: TXFlowgraph | None = None
+tx_fg: "TXFlowgraph | None" = None
 
 
 # ===========================================================================
@@ -594,13 +604,13 @@ _MOCK_DEVICES = [
 ]
 
 
-def _mock_injector(state):
-    """Emit one synthetic packet per device every ~2 s, cycling indefinitely."""
+def _mock_injector(state, interval_s: float = 2.0):
+    """Emit one synthetic packet per device every *interval_s* seconds."""
     seq_counters = {nid: 0 for nid, _, _ in _MOCK_DEVICES}
     for ntw_id, phy_ver, chipset in itertools.cycle(_MOCK_DEVICES):
         if not state.running.is_set():
             break
-        time.sleep(2.0)
+        time.sleep(interval_s)
         seq = seq_counters[ntw_id]
         seq_counters[ntw_id] = (seq + 1) % 256
         entry = {
