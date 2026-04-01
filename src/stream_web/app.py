@@ -441,7 +441,9 @@ def _get_tx() -> TXFlowgraph:
     """Lazy-init the TX flowgraph singleton."""
     global tx_fg
     if tx_fg is None:
+        print("[TX] Initializing TXFlowgraph (opening SoapySDR sink)...", flush=True)
         tx_fg = TXFlowgraph()
+        print("[TX] TXFlowgraph initialized.", flush=True)
     return tx_fg
 
 
@@ -449,31 +451,51 @@ def _get_tx() -> TXFlowgraph:
 def api_tx_start():
     data = flask_request.get_json(silent=True) or {}
     mode = data.get("mode", "tone")
+    print(f"[TX] /api/tx/start called: mode={mode}, data={data}", flush=True)
+    print("[TX] Getting TX flowgraph...", flush=True)
     fg = _get_tx()
+    print(f"[TX] Flowgraph ready (running={fg.is_running}, mode={fg.mode})", flush=True)
     try:
         if mode == "tone":
+            print("[TX] Switching to tone mode...", flush=True)
             fg.tone_mode()
+            print("[TX] Tone mode set.", flush=True)
         elif mode == "packet":
             file_name = data.get("file", "")
             repeat = data.get("repeat", True)
             if not file_name:
                 return jsonify(error="file is required for packet mode"), 400
             file_path = os.path.join(TX_SOURCE_DIR, file_name)
+            print(f"[TX] Switching to packet mode: {file_path} "
+                  f"(exists={os.path.isfile(file_path)}, "
+                  f"size={os.path.getsize(file_path) if os.path.isfile(file_path) else 'N/A'}), "
+                  f"repeat={repeat}", flush=True)
             fg.packet_mode(file_path, repeat=repeat)
+            print("[TX] Packet mode set.", flush=True)
         else:
             return jsonify(error=f"Unknown mode: {mode}"), 400
         if not fg.is_running:
+            print("[TX] Starting flowgraph...", flush=True)
             fg.start()
+            print("[TX] Flowgraph started.", flush=True)
+        else:
+            print("[TX] Flowgraph already running.", flush=True)
         return jsonify(fg.status_dict())
     except Exception as e:
+        print(f"[TX] ERROR: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
         return jsonify(error=str(e)), 500
 
 
 @app.route("/api/tx/stop", methods=["POST"])
 def api_tx_stop():
+    print(f"[TX] /api/tx/stop called (fg={tx_fg is not None}, "
+          f"running={tx_fg.is_running if tx_fg else False})", flush=True)
     if tx_fg is None or not tx_fg.is_running:
         return jsonify(running=False)
     tx_fg.stop()
+    print("[TX] Flowgraph stopped.", flush=True)
     return jsonify(running=False)
 
 
@@ -493,16 +515,16 @@ def api_tx_attn():
     fg = _get_tx()
     if flask_request.method == "POST":
         data = flask_request.get_json(silent=True) or {}
-        attn = float(data.get("attn_db", fg.attenuation_db))
-        fg.set_attenuation(attn)
-        return jsonify(attn_db=fg.attenuation_db)
-    return jsonify(attn_db=fg.attenuation_db)
+        attn = float(data.get("attn_db", fg.attn_db))
+        fg.set_attn(attn)
+        return jsonify(attn_db=fg.attn_db)
+    return jsonify(attn_db=fg.attn_db)
 
 
 @app.route("/api/tx/status", methods=["GET"])
 def api_tx_status():
     if tx_fg is None:
-        return jsonify(running=False, mode=None, freq_hz=0, attenuation_db=0)
+        return jsonify(running=False, mode=None, freq_hz=0, attn_db=30)
     return jsonify(tx_fg.status_dict())
 
 
@@ -534,19 +556,24 @@ def api_tx_files_list():
 
 @app.route("/api/tx/files", methods=["POST"])
 def api_tx_files_upload():
+    print("[TX] /api/tx/files upload called", flush=True)
     if "file" not in flask_request.files:
+        print("[TX] Upload error: no 'file' field", flush=True)
         return jsonify(error="No 'file' field in request"), 400
     f = flask_request.files["file"]
     if not f.filename:
         return jsonify(error="Empty filename"), 400
     name = os.path.basename(f.filename)
     data = f.read()
+    print(f"[TX] Upload received: {name}, {len(data)} bytes", flush=True)
     if len(data) > TX_MAX_UPLOAD_BYTES:
         return jsonify(error=f"File exceeds {TX_MAX_UPLOAD_BYTES} byte limit"), 413
     dest = os.path.join(TX_SOURCE_DIR, name)
     with open(dest, "wb") as out:
         out.write(data)
-    return jsonify(name=name, size=len(data), sha256=_file_sha256(dest))
+    sha = _file_sha256(dest)
+    print(f"[TX] Upload saved: {dest}, sha256={sha}", flush=True)
+    return jsonify(name=name, size=len(data), sha256=sha)
 
 
 @app.route("/api/tx/files/<filename>", methods=["DELETE"])

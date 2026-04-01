@@ -43,7 +43,7 @@ docker run -p 8050:8050 sdr-docker
 - `POST /api/tx/start` — start TX (`{"mode":"tone"}` or `{"mode":"packet","file":"<name>"}`)
 - `POST /api/tx/stop` — stop TX
 - `GET /api/tx/status` — current TX state
-- `POST /api/tx/gain` — set TX gain (`{"gain_db": 0}`)
+- `POST /api/tx/attn` — set TX attenuation in dB, 0=max power 89=min (`{"attn_db": 30}`)
 
 ### TX file management
 - `POST /api/tx/files` — upload IQ binary file (multipart, max 1 GB), returns `{filename, size_bytes, sha256}`
