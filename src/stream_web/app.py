@@ -11,11 +11,13 @@ sample drops.
 
 import base64
 import io
+import itertools
 import json
 import logging
 import multiprocessing as mp
 import os
 import threading
+import time
 from collections import deque
 from multiprocessing import shared_memory
 
@@ -583,42 +585,84 @@ def _drain_results(state):
 
 
 # ===========================================================================
+# Mock mode — synthetic packet injector (SDR_TYPE=mock)
+# ===========================================================================
+
+_MOCK_DEVICES = [
+    (0xABCD1234, 1, "chipset-A"),
+    (0xDEADBEEF, 1, "chipset-B"),
+]
+
+
+def _mock_injector(state):
+    """Emit one synthetic packet per device every ~2 s, cycling indefinitely."""
+    seq_counters = {nid: 0 for nid, _, _ in _MOCK_DEVICES}
+    for ntw_id, phy_ver, chipset in itertools.cycle(_MOCK_DEVICES):
+        if not state.running.is_set():
+            break
+        time.sleep(2.0)
+        seq = seq_counters[ntw_id]
+        seq_counters[ntw_id] = (seq + 1) % 256
+        entry = {
+            "ntw_id": ntw_id,
+            "ntw_id_hex": f"0x{ntw_id:08X}",
+            "seq_num": seq,
+            "energy_dB": -60.0,
+            "chipset": chipset,
+            "channel_num": 0,
+            "freq_delta_hz": 0.0,
+            "payload_val": None,
+            "payload_bytes": 0,
+            "timestamp": time.strftime("%H:%M:%S"),
+            "unix_ts": time.time(),
+            "phy_ver": phy_ver,
+        }
+        with state.lock:
+            state.packet_feed.append(entry)
+            state.packet_feed[:] = state.packet_feed[-1000:]
+            state.decode_results.append(entry)
+            state.decode_results[:] = state.decode_results[-config.MAX_DECODE_HISTORY:]
+
+
+# ===========================================================================
 # Entry point
 # ===========================================================================
 
 def main():
     """Start RX thread, processor process, result drainer, and Flask."""
     state.running.set()
+    mock_mode = config.SDR_TYPE == "mock"
 
-    # Fork the processor BEFORE starting any threads (safe on macOS)
-    proc = mp.Process(
-        target=processor_main,
-        args=(
-            _IQ_SHM_NAME,
-            state._buf_write_idx,
-            state._rx_peak_frac,
-            state._rx_overflows,
-            state._rx_gain_dB,
-            state._td_running,
-            state._td_target_ntw_id,
-            state._td_has_ntw_id,
-            state._td_chipset_arr,
-            state.running,
-            state.drop_queue,
-            state.result_queue,
-        ),
-        daemon=True,
-    )
-    proc.start()
+    if mock_mode:
+        print("[main] Mock mode active — no SDR hardware required.")
+        state.rx_connected.set()
+        threading.Thread(target=_mock_injector, args=(state,), daemon=True).start()
+    else:
+        # Fork the processor BEFORE starting any threads (safe on macOS)
+        proc = mp.Process(
+            target=processor_main,
+            args=(
+                _IQ_SHM_NAME,
+                state._buf_write_idx,
+                state._rx_peak_frac,
+                state._rx_overflows,
+                state._rx_gain_dB,
+                state._td_running,
+                state._td_target_ntw_id,
+                state._td_has_ntw_id,
+                state._td_chipset_arr,
+                state.running,
+                state.drop_queue,
+                state.result_queue,
+            ),
+            daemon=True,
+        )
+        proc.start()
 
-    rx_thread = threading.Thread(target=rx_loop, args=(state,), daemon=True)
-    rx_thread.start()
+        threading.Thread(target=rx_loop, args=(state,), daemon=True).start()
+        threading.Thread(target=_drain_results, args=(state,), daemon=True).start()
+        print("[main] RX thread + processor process started.")
 
-    drain_thread = threading.Thread(target=_drain_results, args=(state,),
-                                    daemon=True)
-    drain_thread.start()
-
-    print("[main] RX thread + processor process started.")
     print(f"[main] Open http://localhost:{config.FLASK_PORT} in a browser.")
 
     try:
