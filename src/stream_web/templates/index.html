@@ -102,9 +102,9 @@
       <input id="tx-file-input" type="text" placeholder="filename.out" style="width:180px" />
       <label><input id="tx-repeat-cb" type="checkbox" checked /> Repeat</label>
       <span class="toolbar-sep"></span>
-      <span class="toolbar-label">Attn (dB):</span>
+      <span class="toolbar-label">TX Attn (dB):</span>
       <button class="btn" onclick="txAttn(-1)">&#x25BC;</button>
-      <span id="tx-attn-val">0</span>
+      <span id="tx-attn-val">30</span>
       <button class="btn" onclick="txAttn(1)">&#x25B2;</button>
       <span class="toolbar-sep"></span>
       <span class="toolbar-label">Status:</span>
@@ -399,7 +399,7 @@
     }
     function txAttn(dir) {
       fetch('/api/tx/attn').then(function(r){ return r.json(); }).then(function(d) {
-        var cur = d.attn_db || 0;
+        var cur = d.attn_db != null ? d.attn_db : 89;
         txPost('/api/tx/attn', { attn_db: cur + dir }).then(function(d2) {
           document.getElementById('tx-attn-val').textContent = d2.attn_db;
         });
@@ -409,8 +409,8 @@
       if (!d) return;
       document.getElementById('tx-status').textContent =
         d.running ? (d.mode || 'on') : 'off';
-      if (d.attenuation_db !== undefined)
-        document.getElementById('tx-attn-val').textContent = d.attenuation_db;
+      if (d.attn_db !== undefined)
+        document.getElementById('tx-attn-val').textContent = d.attn_db;
     }
     (function pollTx() {
       fetch('/api/tx/status').then(function(r){ return r.json(); }).then(txUpdateUI).catch(function(){});

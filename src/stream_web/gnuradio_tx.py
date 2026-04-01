@@ -27,7 +27,7 @@ from .gnuradio_rx import _soapy_driver_args
 # ---------------------------------------------------------------------------
 
 TX_DEFAULT_FREQ_HZ: int = config.CENTER_FREQ_HZ
-TX_DEFAULT_ATTENUATION_DB: float = 0.0
+TX_DEFAULT_ATTN_DB: float = 30.0
 TX_SAMPLE_RATE: int = config.SAMPLE_RATE
 TX_BANDWIDTH: int = config.RF_BANDWIDTH
 TX_SOURCE_DIR: str = os.environ.get(
@@ -51,13 +51,13 @@ class TXFlowgraph(gr.top_block):
         self._sink.set_sample_rate(0, TX_SAMPLE_RATE)
         self._sink.set_frequency(0, TX_DEFAULT_FREQ_HZ)
         self._sink.set_bandwidth(0, TX_BANDWIDTH)
-        self._sink.set_gain(0, -TX_DEFAULT_ATTENUATION_DB)
+        self._sink.set_gain(0, 89.75 - TX_DEFAULT_ATTN_DB)
 
         self._source_block = None
         self._mode: str | None = None
         self._lock = threading.Lock()
         self._freq_hz: int = TX_DEFAULT_FREQ_HZ
-        self._attenuation_db: float = TX_DEFAULT_ATTENUATION_DB
+        self._attn_db: float = TX_DEFAULT_ATTN_DB
         self._running = False
 
     # -- mode switching -----------------------------------------------------
@@ -125,9 +125,11 @@ class TXFlowgraph(gr.top_block):
         self._sink.set_frequency(0, freq_hz)
         self._freq_hz = freq_hz
 
-    def set_attenuation(self, attn_db: float) -> None:
-        self._sink.set_gain(0, -attn_db)
-        self._attenuation_db = attn_db
+    def set_attn(self, attn_db: float) -> None:
+        """Set TX attenuation (0 = max power ≈ 0 dBm, 89 = min power)."""
+        attn_db = max(0.0, min(89.75, attn_db))
+        self._sink.set_gain(0, 89.75 - attn_db)
+        self._attn_db = attn_db
 
     # -- status -------------------------------------------------------------
 
@@ -144,13 +146,13 @@ class TXFlowgraph(gr.top_block):
         return self._freq_hz
 
     @property
-    def attenuation_db(self) -> float:
-        return self._attenuation_db
+    def attn_db(self) -> float:
+        return self._attn_db
 
     def status_dict(self) -> dict:
         return {
             "running": self._running,
             "mode": self._mode,
             "freq_hz": self._freq_hz,
-            "attenuation_db": self._attenuation_db,
+            "attn_db": self._attn_db,
         }
