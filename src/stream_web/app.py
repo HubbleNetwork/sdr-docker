@@ -216,6 +216,9 @@ tx_fg: "TXFlowgraph | None" = None
 
 app = Flask(__name__)
 
+from .iq_capture import bp as _iq_capture_bp  # noqa: E402
+app.register_blueprint(_iq_capture_bp)
+
 if not config.VERBOSE:
     logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
