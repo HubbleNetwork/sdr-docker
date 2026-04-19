@@ -2,6 +2,11 @@
 
 Multi-SDR streaming spectrogram + packet decoder web application.
 
+## Supported SDR devices
+
+- **ADALM-PLUTO / PlutoPlus (Pluto+)** — `SDR_TYPE=pluto` (default). Both use the same SoapyPlutoSDR driver and libiio backend. PlutoPlus has Gigabit Ethernet and 2RX/2TX (AD9363) but only channel 0 is used.
+- **bladeRF 2.0 Micro** — `SDR_TYPE=bladerf`
+
 ## Build & test
 
 ```bash

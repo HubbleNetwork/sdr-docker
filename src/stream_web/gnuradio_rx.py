@@ -45,7 +45,7 @@ def _soapy_driver_args() -> str:
             args += f",serial={serial}"
         return args
 
-    # PlutoSDR (default)
+    # PlutoSDR / PlutoPlus (default) — both use the same SoapyPlutoSDR driver
     uri = config.PLUTO_URI
     if uri.startswith("ip:"):
         # Use uri= (not hostname=) so libiio calls iio_create_context_from_uri

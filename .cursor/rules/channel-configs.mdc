@@ -1,18 +1,16 @@
 ---
-description: Channel plan configurations for quick switching between Final and Legacy
+description: Channel plan configuration
 globs: src/stream_web/config.py
 alwaysApply: false
 ---
 
-# Channel Configurations
-
-Two channel plans exist. Switch between them by updating `CENTER_FREQ_HZ` and `CHANNEL_SPACING` in `src/stream_web/config.py`.
-
-## Final Channels (current)
+# Channel Configuration
 
 ```python
-CENTER_FREQ_HZ = 2_482_440_375       # Channel 9 CF
+CENTER_FREQ_HZ = 2_482_440_375       # Channel 9 CF (LO)
 CHANNEL_SPACING = 25_750.0            # Hz
+LO_CHANNEL = 9
+NUM_CHANNELS = 19
 ```
 
 Channel table:
@@ -21,22 +19,3 @@ Channel table:
 - Ch 18: 2,482,672,125 Hz
 - RX LF: 2,482,049,750 Hz
 - RX HF: 2,482,831,000 Hz
-
-## Legacy Channels
-
-```python
-CENTER_FREQ_HZ = 2_482_754_875        # Channel 9 CF
-CHANNEL_SPACING = 25_500.0            # Hz
-```
-
-Channel table:
-- Ch 0: 2,482,525,375 Hz
-- Ch 9: 2,482,754,875 Hz (LO)
-- Ch 18: 2,482,984,375 Hz
-
-## Common (unchanged between configs)
-
-```python
-LO_CHANNEL = 9
-NUM_CHANNELS = 19
-```
