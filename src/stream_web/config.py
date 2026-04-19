@@ -101,7 +101,7 @@ MAX_DECODE_HISTORY = 200
 SDR_RETRY_INTERVAL_S = 3
 
 # -- Time-domain viewer ----------------------------------------------------
-TD_WINDOW_S = 0.5
+TD_WINDOW_S = 0.75
 
 # -- Sync hubble_satnet_decoder with this SDR config -----------------------
 _fdc.CHANNEL_SPACING = 25_750.0
