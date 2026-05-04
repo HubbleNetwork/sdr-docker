@@ -422,6 +422,8 @@ def api_packets():
         lines.append(json.dumps({
             "device_id": e["ntw_id_hex"],
             "seq_num": e["seq_num"],
+            "auth_tag": e.get("auth_tag"),
+            "phy_ver": e.get("phy_ver"),
             "device_type": e.get("chipset", ""),
             "timestamp": e.get("unix_ts", 0),
             "rssi_dB": e.get("energy_dB"),
@@ -644,6 +646,7 @@ def _mock_injector(state, interval_s: float = 2.0):
             "ntw_id": ntw_id,
             "ntw_id_hex": f"0x{ntw_id:08X}",
             "seq_num": seq,
+            "auth_tag": 0,
             "energy_dB": -60.0,
             "chipset": chipset,
             "channel_num": 0,
