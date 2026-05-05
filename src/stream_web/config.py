@@ -56,7 +56,8 @@ from hubble_satnet_decoder.constants import (  # noqa: F401 — re-exported
 )
 
 # -- SDR selection (override with environment variables) --------------------
-SDR_TYPE = os.environ.get("SDR_TYPE", "pluto").lower()  # "pluto" (ADALM-PLUTO & PlutoPlus) | "bladerf"
+# "pluto" (ADALM-PLUTO & PlutoPlus) or "bladerf"
+SDR_TYPE = os.environ.get("SDR_TYPE", "pluto").lower()
 
 # -- PlutoSDR connection (ignored when SDR_TYPE != "pluto") -----------------
 PLUTO_URI = os.environ.get("PLUTO_URI", "ip:192.168.2.1")
