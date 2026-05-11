@@ -56,7 +56,7 @@ from hubble_satnet_decoder.constants import (  # noqa: F401 — re-exported
 )
 
 # -- SDR selection (override with environment variables) --------------------
-# "pluto" | "bladerf" | "signalhound" (Signal Hound VSG60A TX via Soapy SignalHoundVSG60)
+# "pluto" (ADALM-PLUTO & PlutoPlus) | "bladerf" | "signalhound" (Signal Hound VSG60A TX via Soapy SignalHoundVSG60)
 SDR_TYPE = os.environ.get("SDR_TYPE", "pluto").lower()
 
 # -- Run mode: "full" (RX + decode + web) | "tx_only" (Flask + TX API only; no RX/processor)
