@@ -236,7 +236,7 @@ def processor_main(shm_name, buf_write_idx_val, rx_peak_frac_val,
                     if not decode_info.get("energy_dB"):
                         decode_info["energy_dB"] = td_hit.get("total_energy_dB")
                     try:
-                        td_img = render_td_plot(td_seg, decode_info=decode_info)
+                        td_img, td_stats = render_td_plot(td_seg, decode_info=decode_info)
                         status = f"t={td_hit['time_s']:.3f}s"
                         if decode_info["decoded"]:
                             seq = decode_info.get("seq_num")
@@ -248,6 +248,7 @@ def processor_main(shm_name, buf_write_idx_val, rx_peak_frac_val,
                             k: v for k, v in decode_info.items()
                             if isinstance(v, (str, int, float, bool, list, type(None)))
                         }
+                        td_decode_info_out.update(td_stats)
                         td_iq_seg_out = td_seg.copy()
                     except Exception as e:
                         print(f"[TD] Plot error: {e}")

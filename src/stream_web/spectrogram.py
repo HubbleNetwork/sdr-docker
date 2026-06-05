@@ -175,8 +175,16 @@ def _draw_decoder_overlay(ax, decode_info: dict):
                 fontfamily="monospace", va="bottom", ha="left", alpha=1.0)
 
 
-def render_td_plot(iq_segment: np.ndarray, decode_info: dict | None = None) -> bytes:
-    """Render a time-domain magnitude plot + spectrogram with annotations."""
+def render_td_plot(
+    iq_segment: np.ndarray, decode_info: dict | None = None
+) -> tuple[bytes, dict]:
+    """Render a time-domain magnitude plot + spectrogram with annotations.
+
+    Returns ``(image_bytes, stats)`` where *stats* contains symbol and gap
+    duration statistics derived from the envelope-based edge detection:
+    ``sym_count``, ``sym_mean_ms``, ``sym_std_ms``,
+    ``gap_count``, ``gap_mean_ms``, ``gap_std_ms``.
+    """
     n = len(iq_segment)
     t_ms = np.arange(n) / config.SAMPLE_RATE * 1e3
     mag = np.abs(iq_segment)
@@ -397,4 +405,13 @@ def render_td_plot(iq_segment: np.ndarray, decode_info: dict | None = None) -> b
     buf = io.BytesIO()
     canvas.print_png(buf)
     buf.seek(0)
-    return buf.read()
+
+    stats: dict = {
+        "sym_count": int(len(sym_dur_ms)),
+        "sym_mean_ms": float(round(np.mean(sym_dur_ms), 4)) if len(sym_dur_ms) else None,
+        "sym_std_ms": float(round(np.std(sym_dur_ms), 4)) if len(sym_dur_ms) else None,
+        "gap_count": int(len(gap_dur_ms)),
+        "gap_mean_ms": float(round(np.mean(gap_dur_ms), 4)) if len(gap_dur_ms) else None,
+        "gap_std_ms": float(round(np.std(gap_dur_ms), 4)) if len(gap_dur_ms) else None,
+    }
+    return buf.read(), stats
