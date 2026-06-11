@@ -1,0 +1,40 @@
+name: PyHubbleNetwork CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout sdr-docker
+        uses: actions/checkout@v6
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Build local image
+        run: mkdir -p decoder-src && docker build -t sdr-docker:pr-test .
+
+      - name: Checkout pyhubblenetwork
+        uses: actions/checkout@v6
+        with:
+          repository: HubbleNetwork/pyhubblenetwork
+          path: pyhubblenetwork
+
+      - name: Install pyhubblenetwork
+        run: |
+          cd pyhubblenetwork
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run sat integration tests
+        env:
+          SDR_DOCKER_IMAGE: sdr-docker:pr-test
+        run: pytest pyhubblenetwork/tests/test_sat_integration.py -v --tb=short
