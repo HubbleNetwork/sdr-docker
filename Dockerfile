@@ -67,15 +67,23 @@ COPY run_stream.py /app/
 COPY src/ /app/src/
 COPY entrypoint.sh /app/
 
+# Optionally install hubble-satnet-decoder from a local source tree.
+# In CI, set USE_LOCAL_DECODER=1 and copy the source into decoder-src/
+# before building. Normal builds leave decoder-src/ empty and install from PyPI.
+ARG USE_LOCAL_DECODER=0
+COPY decoder-src/ /tmp/decoder-src/
+
 # Install the python package
 # GNU Radio from the Ubuntu PPA is compiled against NumPy 1.x;
 # pip must not upgrade numpy beyond 1.x or gnuradio will fail to import.
 # --ignore-installed is needed because some system distutils packages
 # (blinker, etc.) can't be pip-uninstalled cleanly.
 RUN python3 -m pip install --upgrade pip setuptools wheel
-RUN python3 -m pip install --ignore-installed \
-    "hubble-satnet-decoder>=1.1.1" \
-    "numpy>=1.26,<2"
+RUN if [ "$USE_LOCAL_DECODER" = "1" ]; then \
+        python3 -m pip install --ignore-installed /tmp/decoder-src "numpy>=1.26,<2"; \
+    else \
+        python3 -m pip install --ignore-installed "hubble-satnet-decoder>=1.1.1" "numpy>=1.26,<2"; \
+    fi
 RUN python3 -m pip install --ignore-installed -e . "numpy>=1.26,<2"
 
 # Start the live spectrogram + decoder web server
