@@ -82,7 +82,22 @@
       <button id="td-btn" class="btn btn-go" onclick="toggleTd()">Start</button>
       <span id="td-status-line"></span>
     </div>
-    <img id="td-img" src="" alt="" style="display:none" />
+    <div id="td-inner-tabs" style="display:none; align-items:center; gap:4px; margin:6px 0 4px 0">
+      <button class="tab-btn active" id="td-tab-full-btn" onclick="switchTdTab('full')">Full Packet</button>
+      <button class="tab-btn" id="td-tab-zoom-btn" onclick="switchTdTab('zoom')">Preamble Symbols</button>
+      <span id="td-zoom-n-ctrl" style="display:none; margin-left:10px; align-items:center; gap:4px">
+        <span class="toolbar-label">Last</span>
+        <button class="btn" onclick="adjustZoomN(-1)">&#x25BC;</button>
+        <span id="td-zoom-n-val">6</span>
+        <button class="btn" onclick="adjustZoomN(1)">&#x25B2;</button>
+        <span class="toolbar-label">symbols</span>
+      </span>
+    </div>
+    <div id="td-tab-full-pane"><img id="td-img" src="" alt="" style="display:none" /></div>
+    <div id="td-tab-zoom-pane" style="display:none">
+      <div id="td-zoom-placeholder" style="color:#888; font-family:monospace; padding:12px 0; display:none">Awaiting preamble symbol capture&hellip;</div>
+      <img id="td-zoom-img" src="" alt="" style="display:none" />
+    </div>
     <div id="td-capture-bar" style="display:none">
       <a id="td-dl-iq" href="/api/td_iq" class="btn btn-link" download>Download IQ (.npy)</a>
       <a id="td-dl-info" href="/api/td_info" class="btn btn-link" target="_blank">View Full Decode Info (JSON)</a>
@@ -114,7 +129,8 @@
 
   <script>
     function switchTab(name) {
-      document.querySelectorAll('.tab-btn').forEach(function(b, i) {
+      var outerBtns = document.querySelectorAll('.tab-bar > .tab-btn');
+      outerBtns.forEach(function(b, i) {
         b.className = 'tab-btn' + (i === (name === 'decodes' ? 0 : 1) ? ' active' : '');
       });
       document.getElementById('tab-decodes').className =
@@ -135,15 +151,25 @@
     var pkEl = document.getElementById('pk');
     var ovEl = document.getElementById('ov');
     var tbody = document.getElementById('dev-body');
-    var tdBtnEl     = document.getElementById('td-btn');
-    var tdInputEl   = document.getElementById('td-dev-input');
-    var tdImgEl     = document.getElementById('td-img');
-    var tdStatusEl  = document.getElementById('td-status-line');
-    var tdChipBtns  = document.getElementById('td-chipset-btns');
-    var tdDetailEl  = document.getElementById('td-detail');
-    var loDisplay   = document.getElementById('lo-display');
-    var tdMode      = null;
-    var tdChipset   = null;
+    var tdBtnEl       = document.getElementById('td-btn');
+    var tdInputEl     = document.getElementById('td-dev-input');
+    var tdImgEl       = document.getElementById('td-img');
+    var tdZoomImgEl   = document.getElementById('td-zoom-img');
+    var tdStatusEl    = document.getElementById('td-status-line');
+    var tdChipBtns    = document.getElementById('td-chipset-btns');
+    var tdDetailEl    = document.getElementById('td-detail');
+    var loDisplay     = document.getElementById('lo-display');
+    var tdInnerTabs   = document.getElementById('td-inner-tabs');
+    var tdTabFullBtn  = document.getElementById('td-tab-full-btn');
+    var tdTabZoomBtn  = document.getElementById('td-tab-zoom-btn');
+    var tdTabFullPane = document.getElementById('td-tab-full-pane');
+    var tdTabZoomPane = document.getElementById('td-tab-zoom-pane');
+    var tdZoomNCtrl   = document.getElementById('td-zoom-n-ctrl');
+    var tdZoomNVal    = document.getElementById('td-zoom-n-val');
+    var tdMode        = null;
+    var tdChipset     = null;
+    var tdActiveTab   = 'full';
+    var tdZoomN       = 6;
     var chipBtnsRendered = false;
 
     function refreshImg() {
@@ -255,6 +281,18 @@
         if (d.td_img) {
           tdImgEl.src = 'data:image/png;base64,' + d.td_img;
           tdImgEl.style.display = 'block';
+          tdInnerTabs.style.display = 'flex';
+        }
+        if (d.td_zoom_img) {
+          tdZoomImgEl.src = 'data:image/png;base64,' + d.td_zoom_img;
+          tdZoomImgEl.style.display = 'block';
+          tdInnerTabs.style.display = 'flex';
+          var ph = document.getElementById('td-zoom-placeholder');
+          if (ph) ph.style.display = 'none';
+        }
+        if (d.td_zoom_n_syms !== undefined && d.td_zoom_n_syms !== tdZoomN) {
+          tdZoomN = d.td_zoom_n_syms;
+          tdZoomNVal.textContent = tdZoomN;
         }
         if (d.td_status) {
           tdStatusEl.textContent = d.td_status;
@@ -316,6 +354,27 @@
       });
     }
 
+    function switchTdTab(name) {
+      tdActiveTab = name;
+      tdTabFullBtn.className = 'tab-btn' + (name === 'full' ? ' active' : '');
+      tdTabZoomBtn.className = 'tab-btn' + (name === 'zoom' ? ' active' : '');
+      tdTabFullPane.style.display = (name === 'full') ? 'block' : 'none';
+      tdTabZoomPane.style.display = (name === 'zoom') ? 'block' : 'none';
+      tdZoomNCtrl.style.display = (name === 'zoom') ? 'inline-flex' : 'none';
+      // Show placeholder when on zoom tab but no image yet
+      var ph = document.getElementById('td-zoom-placeholder');
+      if (ph) {
+        var hasImg = tdZoomImgEl.src && tdZoomImgEl.style.display !== 'none';
+        ph.style.display = (name === 'zoom' && !hasImg) ? 'block' : 'none';
+      }
+    }
+
+    function adjustZoomN(delta) {
+      tdZoomN = Math.max(1, Math.min(8, tdZoomN + delta));
+      tdZoomNVal.textContent = tdZoomN;
+      tdPost({ action: 'set_n_syms', n_syms: tdZoomN });
+    }
+
     function tdPost(body) {
       return fetch('/api/timedomain', {
         method: 'POST',
@@ -328,6 +387,11 @@
       if (tdMode) {
         tdBtnEl.textContent = 'Stop';
         tdBtnEl.className = 'btn btn-stop';
+        tdInnerTabs.style.display = 'flex';
+        if (tdActiveTab === 'zoom') {
+          var ph = document.getElementById('td-zoom-placeholder');
+          if (ph && tdZoomImgEl.style.display === 'none') ph.style.display = 'block';
+        }
       } else {
         tdBtnEl.textContent = 'Start';
         tdBtnEl.className = 'btn btn-go';

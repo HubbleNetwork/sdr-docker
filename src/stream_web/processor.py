@@ -16,12 +16,13 @@ import numpy as np
 from hubble_satnet_decoder import compute_spec_chunk, decode_signal, get_chipset_stats
 
 from . import config
-from .spectrogram import render_spec_image, render_td_plot
+from .spectrogram import render_spec_image, render_td_plot, render_symbol_zoom_plot
 
 
 def processor_main(shm_name, buf_write_idx_val, rx_peak_frac_val,
                    rx_overflows_val, rx_gain_dB_val, td_running_val,
                    td_ntw_id_val, td_has_ntw_val, td_chipset_arr,
+                   td_zoom_n_syms_val,
                    running_event, drop_queue, result_queue):
     """Entry point for the processor process."""
 
@@ -182,6 +183,7 @@ def processor_main(shm_name, buf_write_idx_val, rx_peak_frac_val,
 
         # 5) Time-domain plot
         td_img = None
+        td_zoom_img = None
         td_status_str = None
         td_decode_info_out = None
         td_iq_seg_out = None
@@ -252,6 +254,13 @@ def processor_main(shm_name, buf_write_idx_val, rx_peak_frac_val,
                     except Exception as e:
                         print(f"[TD] Plot error: {e}")
                         td_status_str = f"Render error: {e}"
+                    try:
+                        n_syms = td_zoom_n_syms_val.value
+                        td_zoom_img = render_symbol_zoom_plot(
+                            td_seg, decode_info=decode_info, n_symbols=n_syms,
+                        )
+                    except Exception as e:
+                        print(f"[TD] Zoom plot error: {e}")
             else:
                 if td_chipset:
                     td_status_str = (
@@ -273,6 +282,7 @@ def processor_main(shm_name, buf_write_idx_val, rx_peak_frac_val,
             "stats": stats,
             "chipset_stats": get_chipset_stats(),
             "td_img": td_img,
+            "td_zoom_img": td_zoom_img,
             "td_status": td_status_str,
             "td_decode_info": td_decode_info_out,
             "td_iq_segment": td_iq_seg_out,

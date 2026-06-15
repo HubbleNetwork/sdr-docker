@@ -175,6 +175,212 @@ def _draw_decoder_overlay(ax, decode_info: dict):
                 fontfamily="monospace", va="bottom", ha="left", alpha=1.0)
 
 
+def _measure_transition_us(
+    iq_seg: np.ndarray,
+    begin: int,
+    end: int,
+    sr: int,
+    rise: bool,
+    smoothing_window: int = 32,
+) -> float | None:
+    """10%-90% rise or fall time in microseconds. Returns None if not measurable."""
+    begin = max(0, begin)
+    end = min(len(iq_seg), end)
+    if end - begin < smoothing_window * 2:
+        return None
+    magnitude = np.abs(iq_seg[begin:end])
+    smoothed = np.convolve(magnitude, np.ones(smoothing_window) / smoothing_window, mode="same")
+    lo = float(smoothed.min())
+    hi = float(smoothed.max())
+    if hi - lo < 1e-9:
+        return None
+    thresh_10 = lo + 0.10 * (hi - lo)
+    thresh_90 = lo + 0.90 * (hi - lo)
+    if rise:
+        hits_10 = np.where(smoothed > thresh_10)[0]
+        if not len(hits_10):
+            return None
+        i10 = int(hits_10[0])
+        hits_90 = np.where(smoothed[i10:] > thresh_90)[0]
+        if not len(hits_90):
+            return None
+        i90 = i10 + int(hits_90[0])
+    else:
+        hits_90 = np.where(smoothed < thresh_90)[0]
+        if not len(hits_90):
+            return None
+        i90 = int(hits_90[0])
+        hits_10 = np.where(smoothed[i90:] < thresh_10)[0]
+        if not len(hits_10):
+            return None
+        i10 = i90 + int(hits_10[0])
+    return abs(i10 - i90) / sr * 1e6
+
+
+def render_symbol_zoom_plot(
+    iq_segment: np.ndarray,
+    decode_info: dict | None = None,
+    n_symbols: int = 6,
+) -> bytes:
+    """Magnified view of the last N preamble symbols with rise/fall time annotations."""
+    if decode_info is None or decode_info.get("start_sample") is None:
+        return b""
+
+    sr = config.SAMPLE_RATE
+    sym_len = config.samples_per_symbol
+    slot = config.slot_samples[1]["slot"]
+    preamble_len = config.PREAMBLE_LEN
+
+    start_sample = decode_info["start_sample"]
+    n_sym = min(max(1, n_symbols), preamble_len)
+    sym_offset = preamble_len - n_sym  # first symbol index shown (0-based in preamble)
+
+    first_sym_abs = start_sample + sym_offset * slot
+    last_sym_end_abs = start_sample + preamble_len * slot
+    margin = sym_len // 2
+
+    view_start = max(0, first_sym_abs - margin)
+    view_end = min(len(iq_segment), last_sym_end_abs + margin)
+    if view_end <= view_start or view_end > len(iq_segment):
+        return b""
+
+    zoom_seg = iq_segment[view_start:view_end]
+    n = len(zoom_seg)
+    if n < sym_len:
+        return b""
+
+    t_us = np.arange(n) / sr * 1e6
+    mag = np.abs(zoom_seg)
+    mag_dbfs = 20.0 * np.log10(np.clip(mag, 1e-12, None) / config.ADC_FULL_SCALE)
+
+    # Per-symbol rise/fall measurements
+    sym_infos = []
+    for k in range(n_sym):
+        abs_start = start_sample + (sym_offset + k) * slot
+        s = abs_start - view_start  # relative to zoom_seg
+        e = s + sym_len
+        if s < 0 or e > n:
+            continue
+        quarter = sym_len // 4
+        rise_us = _measure_transition_us(zoom_seg, s - quarter, s + quarter, sr, rise=True)
+        fall_us = _measure_transition_us(zoom_seg, e - quarter, e + quarter, sr, rise=False)
+        sym_infos.append({
+            "preamble_idx": sym_offset + k,
+            "s_us": s / sr * 1e6,
+            "e_us": e / sr * 1e6,
+            "rise_us": rise_us,
+            "fall_us": fall_us,
+        })
+
+    fig = Figure(figsize=(12, 7), dpi=100, facecolor="#0f0f23")
+    canvas = FigureCanvasAgg(fig)
+    ax_td = fig.add_subplot(2, 1, 1)
+    ax_sg = fig.add_subplot(2, 1, 2, sharex=ax_td)
+
+    ax_td.set_facecolor("#1a1a2e")
+    ax_td.plot(t_us, mag_dbfs, color="#7fdbca", linewidth=0.5, alpha=0.8)
+
+    sig_peak = float(np.max(mag_dbfs)) if len(mag_dbfs) else -10.0
+    y_floor = max(-80.0, sig_peak - 40.0)
+    ax_td.set_ylim(y_floor, 2.0)
+    y_mid = (sig_peak + y_floor) / 2.0
+
+    for si in sym_infos:
+        s_us, e_us = si["s_us"], si["e_us"]
+        ax_td.axvspan(s_us, e_us, alpha=0.10, color="#22d3ee")
+        ax_td.axvline(s_us, color="#22d3ee", linewidth=0.8, alpha=0.5)
+        ax_td.axvline(e_us, color="#22d3ee", linewidth=0.8, alpha=0.5)
+
+        ax_td.text(
+            (s_us + e_us) / 2, y_mid,
+            f"P{si['preamble_idx']}",
+            ha="center", va="center", fontsize=9, color="#e2e8f0",
+            fontfamily="monospace", fontweight="bold", rotation=90,
+        )
+
+        if si["rise_us"] is not None:
+            ax_td.text(
+                s_us, sig_peak - 1,
+                f"↑{si['rise_us']:.1f}µs",
+                ha="left", va="top", fontsize=7, color="#4ade80",
+                fontfamily="monospace",
+            )
+        if si["fall_us"] is not None:
+            ax_td.text(
+                e_us, sig_peak - 7,
+                f"↓{si['fall_us']:.1f}µs",
+                ha="right", va="top", fontsize=7, color="#f87171",
+                fontfamily="monospace",
+            )
+
+    rise_vals = [si["rise_us"] for si in sym_infos if si["rise_us"] is not None]
+    fall_vals = [si["fall_us"] for si in sym_infos if si["fall_us"] is not None]
+    stats_lines = []
+    if rise_vals:
+        stats_lines.append(
+            f"Rise  mean={np.mean(rise_vals):.1f}µs  "
+            f"std={np.std(rise_vals):.1f}µs  "
+            f"min={np.min(rise_vals):.1f}  max={np.max(rise_vals):.1f}"
+        )
+    if fall_vals:
+        stats_lines.append(
+            f"Fall  mean={np.mean(fall_vals):.1f}µs  "
+            f"std={np.std(fall_vals):.1f}µs  "
+            f"min={np.min(fall_vals):.1f}  max={np.max(fall_vals):.1f}"
+        )
+    if stats_lines:
+        ax_td.text(
+            0.99, 0.97, "\n".join(stats_lines), transform=ax_td.transAxes,
+            fontsize=8, color="#7fdbca", fontfamily="monospace",
+            va="top", ha="right",
+            bbox=dict(boxstyle="round,pad=0.5", facecolor="#1a1a2e",
+                      edgecolor="#333", alpha=0.92),
+        )
+
+    title = f"Preamble symbols {sym_offset}–{preamble_len - 1} (last {n_sym})"
+    if decode_info.get("chipset"):
+        title += f"  |  {decode_info['chipset']}"
+    ax_td.set_title(title, color="#ccc", fontsize=9, fontfamily="monospace")
+    ax_td.set_ylabel("Magnitude (dBFS)", color="#ccc")
+    ax_td.tick_params(colors="#888", labelbottom=False)
+    for spine in ax_td.spines.values():
+        spine.set_color("#333")
+    ax_td.grid(True, color="#333", linewidth=0.3, alpha=0.5)
+    ax_td.set_xlim(t_us[0], t_us[-1])
+
+    ax_sg.set_facecolor("#1a1a2e")
+    nperseg_sg = min(128, n // 4) if n > 128 else max(16, n // 2)
+    noverlap_sg = nperseg_sg * 3 // 4
+    f_sg, t_sg, Sxx = scipy_spectrogram(
+        zoom_seg, fs=sr,
+        nperseg=nperseg_sg, noverlap=noverlap_sg, return_onesided=False,
+    )
+    f_sg = np.fft.fftshift(f_sg)
+    Sxx = np.fft.fftshift(Sxx, axes=0)
+    Sxx_dB = 10.0 * np.log10(Sxx + 1e-12)
+    t_sg_us = t_sg * 1e6
+    f_sg_khz = f_sg / 1e3
+
+    plow, phigh = np.percentile(Sxx_dB, [2, 99.5])
+    if phigh <= plow:
+        phigh = plow + 1.0
+    ax_sg.pcolormesh(t_sg_us, f_sg_khz, Sxx_dB, vmin=plow, vmax=phigh,
+                     cmap="viridis", shading="auto")
+    ax_sg.set_xlabel("Time (µs)", color="#ccc")
+    ax_sg.set_ylabel("Freq (kHz)", color="#ccc")
+    ax_sg.tick_params(colors="#888")
+    for spine in ax_sg.spines.values():
+        spine.set_color("#333")
+    ax_sg.set_xlim(t_us[0], t_us[-1])
+
+    fig.tight_layout(pad=0.5)
+
+    buf = io.BytesIO()
+    canvas.print_png(buf)
+    buf.seek(0)
+    return buf.read()
+
+
 def render_td_plot(iq_segment: np.ndarray, decode_info: dict | None = None) -> bytes:
     """Render a time-domain magnitude plot + spectrogram with annotations."""
     n = len(iq_segment)

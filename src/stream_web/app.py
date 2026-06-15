@@ -91,6 +91,7 @@ class SharedState:
 
         # td_target_chipset needs a string; use a fixed-size mp.Array
         self._td_chipset_arr = mp.Array("c", 32)
+        self._td_zoom_n_syms = mp.Value("i", 6)
 
         # --- drop positions (RX→processor, lock-free via mp.Queue) ---
         self.drop_queue: mp.Queue = mp.Queue()
@@ -111,6 +112,7 @@ class SharedState:
         }
 
         self.td_latest_img: bytes = b""
+        self.td_zoom_latest_img: bytes = b""
         self.td_status: str = ""
         self.td_decode_info: dict | None = None
         self.td_iq_segment: np.ndarray | None = None
@@ -195,6 +197,14 @@ class SharedState:
     @td_target_chipset.setter
     def td_target_chipset(self, v):
         self._td_chipset_arr.value = (v or "").encode()[:31]
+
+    @property
+    def td_zoom_n_syms(self) -> int:
+        return self._td_zoom_n_syms.value
+
+    @td_zoom_n_syms.setter
+    def td_zoom_n_syms(self, v: int) -> None:
+        self._td_zoom_n_syms.value = max(1, min(int(v), config.PREAMBLE_LEN))
 
     # legacy compat — RX pushes drop positions via queue now
     @property
@@ -283,6 +293,9 @@ def api_status():
         td_b64 = ""
         if state.td_latest_img:
             td_b64 = base64.b64encode(state.td_latest_img).decode("ascii")
+        td_zoom_b64 = ""
+        if state.td_zoom_latest_img:
+            td_zoom_b64 = base64.b64encode(state.td_zoom_latest_img).decode("ascii")
 
         cs_stats = dict(state.chipset_stats)
 
@@ -302,11 +315,13 @@ def api_status():
         return jsonify(
             sdr_connected=state.rx_connected.is_set(),
             devices=dev_list, stats=stats,
-            td_img=td_b64, td_running=state.td_running,
+            td_img=td_b64, td_zoom_img=td_zoom_b64,
+            td_running=state.td_running,
             td_device_id=state.td_target_ntw_id,
             td_chipset=state.td_target_chipset,
             td_status=state.td_status,
             td_decode_info=state.td_decode_info,
+            td_zoom_n_syms=state.td_zoom_n_syms,
             chipset_stats=cs_stats,
             known_chipsets=sorted(config.SYNTH_RES.keys()),
             lo_freq_hz=state.lo_freq_hz,
@@ -367,11 +382,17 @@ def api_timedomain():
                     return jsonify(error="Invalid device_id"), 400
         elif action == "stop":
             state.td_running = False
+        elif action == "set_n_syms":
+            try:
+                state.td_zoom_n_syms = int(data.get("n_syms", 6))
+            except (ValueError, TypeError):
+                return jsonify(error="Invalid n_syms"), 400
     with state.lock:
         status = state.td_status
     return jsonify(
         running=state.td_running, device_id=state.td_target_ntw_id,
         chipset=state.td_target_chipset, status=status,
+        td_zoom_n_syms=state.td_zoom_n_syms,
     )
 
 
@@ -616,6 +637,8 @@ def _drain_results(state):
                 state.chipset_stats = r["chipset_stats"]
             if r.get("td_img") is not None:
                 state.td_latest_img = r["td_img"]
+            if r.get("td_zoom_img") is not None:
+                state.td_zoom_latest_img = r["td_zoom_img"]
             if r.get("td_status") is not None:
                 state.td_status = r["td_status"]
             if r.get("td_decode_info") is not None:
@@ -692,6 +715,7 @@ def main():
                 state._td_target_ntw_id,
                 state._td_has_ntw_id,
                 state._td_chipset_arr,
+                state._td_zoom_n_syms,
                 state.running,
                 state.drop_queue,
                 state.result_queue,
