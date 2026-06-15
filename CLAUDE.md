@@ -41,7 +41,7 @@ docker run -p 8050:8050 sdr-docker
 ## API endpoints
 
 ### RX
-- `GET /api/status` — system status, RX metrics, peak power
+- `GET /api/status` — system status, RX metrics, peak power; includes `sdr_connected` (bool) indicating whether the SDR hardware is currently open
 - `GET /api/packets` — poll-and-drain decoded packets (NDJSON)
 
 ### TX

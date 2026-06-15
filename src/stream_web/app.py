@@ -300,6 +300,7 @@ def api_status():
                 cs_stats[chip]["avg_rs_corr_pct"] = round(sum(pcts) / len(pcts), 1)
 
         return jsonify(
+            sdr_connected=state.rx_connected.is_set(),
             devices=dev_list, stats=stats,
             td_img=td_b64, td_running=state.td_running,
             td_device_id=state.td_target_ntw_id,

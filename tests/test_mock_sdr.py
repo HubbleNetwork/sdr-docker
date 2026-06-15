@@ -201,3 +201,11 @@ class TestFlaskRoutes:
         assert isinstance(dev["seq_nums"], list)
         assert isinstance(dev["max_energy_dB"], (int, float))
         assert "chipset" in dev
+
+    def test_api_status_reports_sdr_connected(self):
+        client = self._client()
+        # rx_connected reflects whether the SDR hardware is currently open.
+        state.rx_connected.set()
+        assert client.get("/api/status").get_json()["sdr_connected"] is True
+        state.rx_connected.clear()
+        assert client.get("/api/status").get_json()["sdr_connected"] is False
