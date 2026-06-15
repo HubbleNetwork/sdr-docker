@@ -71,7 +71,7 @@ COPY entrypoint.sh /app/
 # In CI, set USE_LOCAL_DECODER=1 and copy the source into decoder-src/
 # before building. Normal builds leave decoder-src/ empty and install from PyPI.
 ARG USE_LOCAL_DECODER=0
-COPY decoder-src/ /tmp/decoder-src/
+COPY decoder-src* /tmp/decoder-src/
 
 # Install the python package
 # GNU Radio from the Ubuntu PPA is compiled against NumPy 1.x;
