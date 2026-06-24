@@ -132,3 +132,28 @@ def measure_transition_us(
             return None
         i10 = i90 + int(hits_10[0])
     return abs(i10 - i90) / sr * 1e6
+
+
+def edges_to_timing_stats(edges: list[tuple[int, int]], sr: int) -> dict:
+    """Convert corrected (start, end) sample pairs into timing stats.
+
+    Returns dict with sym_count, sym_mean_ms, sym_std_ms,
+    gap_count, gap_mean_ms, gap_std_ms.
+    """
+    if not edges:
+        return {
+            "sym_count": 0, "sym_mean_ms": None, "sym_std_ms": None,
+            "gap_count": 0, "gap_mean_ms": None, "gap_std_ms": None,
+        }
+    s_arr = np.array([s for s, _ in edges])
+    e_arr = np.array([e for _, e in edges])
+    sym_ms = (e_arr - s_arr) / sr * 1e3
+    gap_ms = (s_arr[1:] - e_arr[:-1]) / sr * 1e3 if len(s_arr) > 1 else np.array([])
+    return {
+        "sym_count": int(len(sym_ms)),
+        "sym_mean_ms": float(round(np.mean(sym_ms), 4)),
+        "sym_std_ms": float(round(np.std(sym_ms), 4)),
+        "gap_count": int(len(gap_ms)),
+        "gap_mean_ms": float(round(np.mean(gap_ms), 4)) if len(gap_ms) else None,
+        "gap_std_ms": float(round(np.std(gap_ms), 4)) if len(gap_ms) else None,
+    }
