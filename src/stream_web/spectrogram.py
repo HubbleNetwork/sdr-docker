@@ -363,8 +363,17 @@ def render_symbol_zoom_plot(
     return buf.read()
 
 
-def render_td_plot(iq_segment: np.ndarray, decode_info: dict | None = None) -> bytes:
-    """Render a time-domain magnitude plot + spectrogram with annotations."""
+def render_td_plot(
+    iq_segment: np.ndarray, decode_info: dict | None = None
+) -> tuple[bytes, dict]:
+    """Render a time-domain magnitude plot + spectrogram with annotations.
+
+    Returns ``(image_bytes, stats)`` where *stats* contains symbol and gap
+    duration statistics derived from detected symbol edges (protocol-corrected
+    when ``decode_info.start_sample`` is available; otherwise envelope-threshold
+    based): ``sym_count``, ``sym_mean_ms``, ``sym_std_ms``,
+    ``gap_count``, ``gap_mean_ms``, ``gap_std_ms``.
+    """
     n = len(iq_segment)
     t_ms = np.arange(n) / config.SAMPLE_RATE * 1e3
     mag = np.abs(iq_segment)
@@ -372,39 +381,57 @@ def render_td_plot(iq_segment: np.ndarray, decode_info: dict | None = None) -> b
     mag_dbfs = 20.0 * np.log10(np.clip(mag, 1e-12, None) / config.ADC_FULL_SCALE)
     DBFS_FLOOR = -80.0
 
-    # Envelope-based symbol edge detection: smooth with a 0.3ms boxcar to merge
-    # intra-symbol ripple without smearing the 800us inter-symbol gaps
-    win_samples = max(1, int(0.3e-3 * config.SAMPLE_RATE))
-    envelope = np.convolve(mag, np.ones(win_samples) / win_samples, mode="same")
+    # Symbol edge detection: use protocol-aware correction when decode_info
+    # has start_sample (same method as the zoomed symbol plot), otherwise fall
+    # back to envelope threshold detection.
+    starts = np.array([], dtype=int)
+    ends = np.array([], dtype=int)
 
-    # Threshold at 40% of the noise-to-peak dynamic range so weak packets still
-    # register without false triggers from noise
-    noise_floor = np.percentile(envelope, 10)
-    signal_peak = np.percentile(envelope, 95)
-    thresh = noise_floor + 0.4 * (signal_peak - noise_floor)
-    above = envelope > thresh
+    if decode_info is not None and decode_info.get("start_sample") is not None:
+        sym_len = config.samples_per_symbol
+        phy_ver = decode_info.get("phy_ver", 1)
+        slot = config.slot_samples[phy_ver]["slot"]
+        n_sym = (config.PREAMBLE_LEN
+                 + config.NUM_HEADER_SYMS
+                 + (decode_info.get("num_pdu_symbols") or 0))
+        corrected = correct_symbol_edges(
+            iq_segment, decode_info["start_sample"], 0, n_sym, 0, slot, sym_len,
+        )
+        if corrected:
+            starts = np.array([s for s, _e in corrected])
+            ends = np.array([e for _s, e in corrected])
 
-    padded = np.concatenate([[False], above, [False]])
-    edges = np.diff(padded.astype(np.int8))
-    starts = np.where(edges == 1)[0]
-    ends = np.where(edges == -1)[0]
-
-    # Drop glitches shorter than 2ms — real FSK symbols are 8ms
-    min_sym = int(2e-3 * config.SAMPLE_RATE)
-    mask = (ends - starts) >= min_sym
-    starts, ends = starts[mask], ends[mask]
-
-    # Merge segments separated by less than 0.1ms; the boxcar smoothing can
-    # split a single symbol into multiple runs if there's a deep mid-symbol dip
-    min_gap = int(0.1e-3 * config.SAMPLE_RATE)
-    m_starts, m_ends = [], []
-    for s, e in zip(starts, ends):
-        if m_ends and (s - m_ends[-1]) < min_gap:
-            m_ends[-1] = e
-        else:
-            m_starts.append(s)
-            m_ends.append(e)
-    starts, ends = np.array(m_starts), np.array(m_ends)
+    if len(starts) == 0:
+        # Fallback: envelope threshold detection
+        # Smooth with a 0.3ms boxcar to merge intra-symbol ripple without
+        # smearing the 800us inter-symbol gaps
+        win_samples = max(1, int(0.3e-3 * config.SAMPLE_RATE))
+        envelope = np.convolve(mag, np.ones(win_samples) / win_samples, mode="same")
+        # Threshold at 40% of the noise-to-peak dynamic range so weak packets
+        # still register without false triggers from noise
+        noise_floor = np.percentile(envelope, 10)
+        signal_peak = np.percentile(envelope, 95)
+        thresh = noise_floor + 0.4 * (signal_peak - noise_floor)
+        above = envelope > thresh
+        padded = np.concatenate([[False], above, [False]])
+        diff = np.diff(padded.astype(np.int8))
+        starts = np.where(diff == 1)[0]
+        ends = np.where(diff == -1)[0]
+        # Drop glitches shorter than 2ms — real FSK symbols are 8ms
+        min_sym = int(2e-3 * config.SAMPLE_RATE)
+        mask = (ends - starts) >= min_sym
+        starts, ends = starts[mask], ends[mask]
+        # Merge segments separated by less than 0.1ms; the boxcar smoothing can
+        # split a single symbol into multiple runs if there's a deep mid-symbol dip
+        min_gap = int(0.1e-3 * config.SAMPLE_RATE)
+        m_starts, m_ends = [], []
+        for s, e in zip(starts, ends):
+            if m_ends and (s - m_ends[-1]) < min_gap:
+                m_ends[-1] = e
+            else:
+                m_starts.append(s)
+                m_ends.append(e)
+        starts, ends = np.array(m_starts), np.array(m_ends)
 
     sym_dur_ms = (ends - starts) / config.SAMPLE_RATE * 1e3
     gap_starts = ends[:-1]
@@ -477,7 +504,7 @@ def render_td_plot(iq_segment: np.ndarray, decode_info: dict | None = None) -> b
         ax_td.axvspan(t0, t1, alpha=0.12, color="#f87171")
 
     # Stats box: symbol/gap means + std, plus cumulative drift vs expected 8.8ms slot.
-    # Drift = (actual first-to-last span) - (n_periods \u00d7 8.8ms); positive = TX clock fast
+    # Drift = (actual first-to-last span) - (n_periods × 8.8ms); positive = TX clock fast
     EXPECTED_PERIOD_MS = 8.8
     lines = []
     if len(sym_dur_ms):
@@ -608,4 +635,13 @@ def render_td_plot(iq_segment: np.ndarray, decode_info: dict | None = None) -> b
     buf = io.BytesIO()
     canvas.print_png(buf)
     buf.seek(0)
-    return buf.read()
+
+    stats: dict = {
+        "sym_count": int(len(sym_dur_ms)),
+        "sym_mean_ms": float(round(np.mean(sym_dur_ms), 4)) if len(sym_dur_ms) else None,
+        "sym_std_ms": float(round(np.std(sym_dur_ms), 4)) if len(sym_dur_ms) else None,
+        "gap_count": int(len(gap_dur_ms)),
+        "gap_mean_ms": float(round(np.mean(gap_dur_ms), 4)) if len(gap_dur_ms) else None,
+        "gap_std_ms": float(round(np.std(gap_dur_ms), 4)) if len(gap_dur_ms) else None,
+    }
+    return buf.read(), stats

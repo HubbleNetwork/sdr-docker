@@ -427,7 +427,8 @@ def api_packets():
     """Poll-and-drain: return all decodes since last call as JSONL, then clear.
 
     Each line is a JSON object with: device_id, seq_num, device_type,
-    timestamp, rssi_dB, channel_num, freq_offset_hz.
+    timestamp, rssi_dB, channel_num, freq_offset_hz, pdu_n_corr, header_n_corr
+    and symbol data(sym_count, sym_mean_ms, sym_std_ms, gap_count, gap_mean_ms, gap_std_ms).
     """
     with state.lock:
         entries = list(state.packet_feed)
@@ -452,6 +453,14 @@ def api_packets():
             "channel_num": e.get("channel_num"),
             "freq_offset_hz": e.get("freq_delta_hz"),
             "payload_b64": payload_b64,
+            "pdu_n_corr": e.get("pdu_n_corr"),
+            "header_n_corr": e.get("header_n_corr"),
+            "sym_count": e.get("sym_count"),
+            "sym_mean_ms": e.get("sym_mean_ms"),
+            "sym_std_ms": e.get("sym_std_ms"),
+            "gap_count": e.get("gap_count"),
+            "gap_mean_ms": e.get("gap_mean_ms"),
+            "gap_std_ms": e.get("gap_std_ms"),
         }))
     payload = "\n".join(lines) + ("\n" if lines else "")
     return Response(payload, mimetype="application/x-ndjson")
