@@ -19,6 +19,11 @@ from . import config
 from .spectrogram import render_spec_image, render_symbol_zoom_plot, render_td_plot
 from .timing import correct_symbol_edges, edges_to_timing_stats
 
+# Two packets with the same device ID, auth tag, and payload that
+# have preambles 1s within each other are considered the same packet
+# and are de-duplicated.
+_DEDUP_START_TOL_S = 1.0
+
 
 def processor_main(shm_name, buf_write_idx_val, rx_peak_frac_val,
                    rx_overflows_val, rx_gain_dB_val, td_running_val,
@@ -35,6 +40,10 @@ def processor_main(shm_name, buf_write_idx_val, rx_peak_frac_val,
     detection_history: list[dict] = []
 
     buf_len = config.IQ_BUFFER_SIZE
+
+    # Content identity (ntw_id, auth_tag, payload) -> most recent start time,
+    # for strict de-duplication of a packet decoded more than once.
+    recent_decodes: dict = {}
 
     print("[PROC] Processor process started (separate GIL).", flush=True)
 
@@ -88,6 +97,20 @@ def processor_main(shm_name, buf_write_idx_val, rx_peak_frac_val,
             print(f"[PROC] Decode error: {e}")
             packets, detections, attempts = [], [], []
         t_dec_ms = (time.perf_counter() - t_dec0) * 1000
+
+        # De-duplicate packets that are the same and overlap in time
+        recent_decodes = {k: v for k, v in recent_decodes.items()
+                          if t0 - v < 3.0}
+        deduped = []
+        for p in packets:
+            start_t = t0 - (config.DECODE_WINDOW_S - p.get("time_s", 0.0))
+            key = (p.get("ntw_id"), p.get("auth_tag"), p.get("payload_val"))
+            prev = recent_decodes.get(key)
+            if prev is not None and abs(start_t - prev) < _DEDUP_START_TOL_S:
+                continue  # same packet within the tolerance -> drop the repeat
+            recent_decodes[key] = start_t
+            deduped.append(p)
+        packets = detections = deduped
 
         # Annotate sample-drop failures
         if drop_sample_offsets and attempts:

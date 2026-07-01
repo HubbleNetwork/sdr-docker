@@ -91,8 +91,13 @@ SPEC_IMG_WIDTH = 1200
 SPEC_IMG_HEIGHT = 200
 
 # -- Decoder scheduling ----------------------------------------------------
-DECODE_WINDOW_S = 1.0
-DECODE_INTERVAL_S = 0.5
+# Decode window is 2.5x the Decode interval, so packets that overlap
+# the decode interval boundary are still decoded.
+DECODE_WINDOW_S = 1.5
+
+# Decode interval, set to 0.6, which is higher than our longest packet
+# duration of 0.53s, with some margin
+DECODE_INTERVAL_S = 0.6
 DECODE_SAMPLES = int(DECODE_WINDOW_S * SAMPLE_RATE)
 
 # -- Web server & app behaviour --------------------------------------------
