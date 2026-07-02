@@ -118,3 +118,28 @@ _fdc.DEVICE_CHANNEL_SPACING = {
 CHANNEL_SPACING = _fdc.CHANNEL_SPACING
 DEVICE_CHANNEL_SPACING = _fdc.DEVICE_CHANNEL_SPACING
 _fdc.configure(SAMPLE_RATE)
+
+
+# -- Packet symbol geometry (shared by analysis / processor / spectrogram) -------------
+# These derive a packet's symbol layout from the decoder's output, so the same expression
+# isn't re-inlined at every correct_symbol_edges() call site.
+
+def packet_symbol_grid(decode_info: dict) -> tuple[int, int, int]:
+    """Return ``(n_sym, slot, sym_len)`` for a decoded-packet / decode_info dict:
+    total symbols (preamble + header + PDU), samples per symbol slot, and symbol length."""
+    ver = decode_info.get("phy_ver", 1)
+    slot = slot_samples.get(ver, slot_samples[1])["slot"]
+    n_sym = PREAMBLE_LEN + NUM_HEADER_SYMS + (decode_info.get("num_pdu_symbols") or 0)
+    return n_sym, slot, samples_per_symbol
+
+
+def rotated_hop_sequence(channel_num, hop_seq_idx) -> list[int] | None:
+    """Channel-hop sequence rotated to start at ``channel_num`` (so index h is the channel
+    for hop h). Returns None if the hop parameters are missing or inconsistent."""
+    if channel_num is None or hop_seq_idx is None or hop_seq_idx >= len(HOPPING_SEQS):
+        return None
+    seq = HOPPING_SEQS[hop_seq_idx]
+    if channel_num not in seq:
+        return None
+    i = seq.index(channel_num)
+    return seq[i:] + seq[:i]

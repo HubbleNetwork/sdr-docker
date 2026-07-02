@@ -12,7 +12,11 @@ from PIL import Image, ImageDraw, ImageFont  # noqa: E402
 from scipy.signal import spectrogram as scipy_spectrogram  # noqa: E402
 
 from . import config  # noqa: E402
-from .timing import correct_symbol_edges, measure_transition_us  # noqa: E402
+from .timing import (  # noqa: E402
+    correct_symbol_edges,
+    dominant_symbol_freq,
+    measure_transition_us,
+)
 
 # -- Pre-computed LUT and font ----------------------------------------------
 
@@ -388,12 +392,7 @@ def render_td_plot(
     ends = np.array([], dtype=int)
 
     if decode_info is not None and decode_info.get("start_sample") is not None:
-        sym_len = config.samples_per_symbol
-        phy_ver = decode_info.get("phy_ver", 1)
-        slot = config.slot_samples[phy_ver]["slot"]
-        n_sym = (config.PREAMBLE_LEN
-                 + config.NUM_HEADER_SYMS
-                 + (decode_info.get("num_pdu_symbols") or 0))
+        n_sym, slot, sym_len = config.packet_symbol_grid(decode_info)
         corrected = correct_symbol_edges(
             iq_segment, decode_info["start_sample"], 0, n_sym, 0, slot, sym_len,
         )
@@ -452,20 +451,10 @@ def render_td_plot(
     y_floor = max(DBFS_FLOOR, sig_peak_dbfs - 60)
     ax_td.set_ylim(y_floor, 0)
 
-    # FFT-based per-symbol tone frequency: blank the DC bin (bottom 2%) so
-    # IQ imbalance spurs don't eclipse the real FSK carrier
-    sym_freqs = []
-    for s, e in zip(starts, ends):
-        sym_iq = iq_segment[s:e]
-        spec = np.fft.fft(sym_iq)
-        psd = np.abs(spec) ** 2
-        freqs = np.fft.fftfreq(len(sym_iq), d=1.0 / config.SAMPLE_RATE)
-        dc_zone = int(len(psd) * 0.02)
-        if dc_zone > 0:
-            psd[:dc_zone] = 0
-            psd[-dc_zone:] = 0
-        pk = np.argmax(psd)
-        sym_freqs.append(freqs[pk])
+    # FFT-based per-symbol tone frequency (DC bins blanked so IQ-imbalance spurs don't
+    # eclipse the real FSK carrier).
+    sym_freqs = [dominant_symbol_freq(iq_segment[s:e], config.SAMPLE_RATE)
+                 for s, e in zip(starts, ends)]
 
     # F0 reference: use the decoder's measured value if available (most accurate),
     # otherwise fall back to the second detected symbol (first is the F63 preamble tone)

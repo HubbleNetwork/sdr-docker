@@ -181,11 +181,9 @@ def processor_main(shm_name, buf_write_idx_val, rx_peak_frac_val,
                 "gap_count": None, "gap_mean_ms": None, "gap_std_ms": None,
             }
             if pkt_start is not None:
-                slot = config.slot_samples.get(ver, config.slot_samples[1])["slot"]
-                n_sym = (config.PREAMBLE_LEN + config.NUM_HEADER_SYMS
-                         + (pkt.get("num_pdu_symbols") or 0))
+                n_sym, slot, sym_len = config.packet_symbol_grid(pkt)
                 edges = correct_symbol_edges(
-                    decode_chunk, pkt_start, 0, n_sym, 0, slot, config.samples_per_symbol,
+                    decode_chunk, pkt_start, 0, n_sym, 0, slot, sym_len,
                 )
                 if edges:
                     timing = edges_to_timing_stats(edges, config.SAMPLE_RATE)

@@ -43,6 +43,8 @@ docker run -p 8050:8050 sdr-docker
 ### RX
 - `GET /api/status` — system status, RX metrics, peak power; includes `sdr_connected` (bool) indicating whether the SDR hardware is currently open
 - `GET /api/packets` — poll-and-drain decoded packets (NDJSON)
+- `GET /api/iq_capture?seconds=N` — record N s (1–60) of raw IQ forward from now; returns a `.npy` (complex64) download with `X-Sample-Rate-Hz` / `X-Center-Freq-Hz` / `X-N-Samples` headers
+- `GET /api/record_analyze?seconds=N` — record N s (1–30) and return a plain-text diagnostic report file: per-symbol timing (drift/rate/duration/gap) and per-symbol frequency vs expected channel window for the representative packet, plus synth-res/chipset, amplitude/SNR, RS corrections, regime + diagnosis; noise/mis-hits filtered by preamble strength; backs `hubblenetwork sat record`
 
 ### TX
 - `POST /api/tx/start` — start TX (`{"mode":"tone"}` or `{"mode":"packet","file":"<name>"}`)

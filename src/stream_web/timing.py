@@ -157,3 +157,41 @@ def edges_to_timing_stats(edges: list[tuple[int, int]], sr: int) -> dict:
         "gap_mean_ms": float(round(np.mean(gap_ms), 4)) if len(gap_ms) else None,
         "gap_std_ms": float(round(np.std(gap_ms), 4)) if len(gap_ms) else None,
     }
+
+
+def dominant_symbol_freq(iq_seg: np.ndarray, sr: int, blank_dc_frac: float = 0.02) -> float:
+    """Dominant baseband frequency (Hz) of a symbol-length slice via FFT.
+
+    The DC bins (bottom/top ``blank_dc_frac``) are zeroed first so IQ-imbalance spurs near
+    0 Hz don't eclipse the real FSK carrier. Returns 0.0 for an empty slice.
+    """
+    if not len(iq_seg):
+        return 0.0
+    psd = np.abs(np.fft.fft(iq_seg)) ** 2
+    freqs = np.fft.fftfreq(len(iq_seg), d=1.0 / sr)
+    dc = int(len(psd) * blank_dc_frac)
+    if dc > 0:
+        psd[:dc] = 0
+        psd[-dc:] = 0
+    return float(freqs[int(np.argmax(psd))])
+
+
+def symbol_amplitudes_dbfs(iq_seg: np.ndarray, edges: list[tuple[int, int]],
+                           full_scale: float = 1.0):
+    """Per-symbol RMS amplitude and per-gap noise-floor RMS, both in dBFS.
+
+    Returns ``(sym_dbfs, gap_dbfs)`` -- one amplitude per symbol body, one noise-floor
+    level per inter-symbol gap. Drives amplitude-dropoff and per-symbol SNR.
+    """
+    sym_dbfs, gap_dbfs = [], []
+    for i, (s, e) in enumerate(edges):
+        body = iq_seg[s:e]
+        if len(body):
+            sym_dbfs.append(20.0 * np.log10(np.sqrt(np.mean(np.abs(body) ** 2))
+                                            / full_scale + 1e-30))
+        if i < len(edges) - 1:
+            gap = iq_seg[e:edges[i + 1][0]]
+            if len(gap):
+                gap_dbfs.append(20.0 * np.log10(np.sqrt(np.mean(np.abs(gap) ** 2))
+                                                / full_scale + 1e-30))
+    return sym_dbfs, gap_dbfs
