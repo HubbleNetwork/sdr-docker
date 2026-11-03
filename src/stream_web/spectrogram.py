@@ -341,7 +341,8 @@ def render_spectrum_image(chunks: list[np.ndarray], lo_freq_hz: float) -> bytes:
 
     # Frequency axis: bins run -fs/2 .. +fs/2 (ascending), centred on the LO.
     fs = config.SAMPLE_RATE
-    freqs_hz = np.linspace(-fs / 2.0, fs / 2.0, n_bins) + lo_freq_hz
+    bin_hz = fs / n_bins
+    freqs_hz = (np.arange(n_bins) - n_bins // 2) * bin_hz + lo_freq_hz
     freqs_mhz = freqs_hz / 1e6
     center_mhz = lo_freq_hz / 1e6
 
@@ -369,7 +370,7 @@ def render_spectrum_image(chunks: list[np.ndarray], lo_freq_hz: float) -> bytes:
     ax.set_xlim(freqs_mhz[0], freqs_mhz[-1])
 
     # FCC compliance overlay locked onto the strongest tone (skipped if none).
-    fcc = evaluate_fcc_compliance(freqs_hz, avg_dB, fs / n_bins)
+    fcc = evaluate_fcc_compliance(freqs_hz, avg_dB, bin_hz)
     if fcc is not None:
         _draw_fcc_tone_overlay(ax, freqs_mhz, fcc)
 

@@ -46,7 +46,7 @@ except ImportError:
     rx_loop = None  # type: ignore[assignment]
 
 # ===========================================================================
-# Shared application state
+# Module-level constants
 # ===========================================================================
 
 _IQ_SHM_NAME = "pluto_iq_buf"
@@ -59,6 +59,22 @@ _IQ_NBYTES = config.IQ_BUFFER_SIZE * np.dtype(np.complex64).itemsize
 _WORKER_MAX_RESTARTS = 5
 _WORKER_RESTART_WINDOW_S = 60.0
 
+_CAPTURE_DEFAULT_SECONDS = 10
+_CAPTURE_MAX_SECONDS = 30
+
+_FCC_CHECK_DEFAULT_SECONDS = int(config.SPECTRUM_AVG_CHUNKS * config.SPEC_CHUNK_S)
+
+TX_MAX_UPLOAD_BYTES = 1024 * 1024 * 1024  # 1 GB
+
+_MOCK_DEVICES = [
+    (0xABCD1234, 1, "chipset-A"),
+    (0xDEADBEEF, 1, "chipset-B"),
+]
+
+
+# ===========================================================================
+# Shared application state
+# ===========================================================================
 
 class SharedState:
     """State shared between RX thread, processor process, and Flask.
@@ -511,9 +527,6 @@ def api_packets():
     return Response(payload, mimetype="application/x-ndjson")
 
 
-_CAPTURE_DEFAULT_SECONDS = 10
-_CAPTURE_MAX_SECONDS = 30
-
 # Only one capture may run at a time. Each holds a Flask worker for up to its full
 # duration, and concurrent captures would contend for both workers and buffer
 # bandwidth; a second request is rejected rather than queued. Shared by
@@ -669,9 +682,6 @@ def api_record_analyze():
     return resp
 
 
-_FCC_CHECK_DEFAULT_SECONDS = int(config.SPECTRUM_AVG_CHUNKS * config.SPEC_CHUNK_S)
-
-
 @app.route("/api/fcc_check", methods=["GET"])
 def api_fcc_check():
     """Record N seconds of IQ (default: the same window the spectrum-analyzer
@@ -708,8 +718,8 @@ def api_fcc_check():
     n_bins = chunks[0].shape[0]
     fs = config.SAMPLE_RATE
     center_freq_hz = state.lo_freq_hz
-    freqs_hz = np.linspace(-fs / 2.0, fs / 2.0, n_bins) + center_freq_hz
     bin_hz = fs / n_bins
+    freqs_hz = (np.arange(n_bins) - n_bins // 2) * bin_hz + center_freq_hz
 
     avg_dB, _peak_dB = spectrum_traces(chunks)
     fcc = evaluate_fcc_compliance(freqs_hz, avg_dB, bin_hz)
@@ -723,7 +733,7 @@ def api_fcc_check():
         "center_freq_hz": int(center_freq_hz),
         "rx_gain_db": state.rx_gain_dB,
         "min_snr_db": config.FCC_OVERLAY_MIN_SNR_DB,
-        "dc_notch_hz": config.SPEC_DC_NOTCH_BINS * bin_hz,
+        "dc_notch_hz": (2 * config.SPEC_DC_NOTCH_BINS + 1) * bin_hz,
     }
 
     if fcc is None:
@@ -857,9 +867,6 @@ def api_tx_status():
     if tx_fg is None:
         return jsonify(running=False, mode=None, freq_hz=0, attn_db=30)
     return jsonify(tx_fg.status_dict())
-
-
-TX_MAX_UPLOAD_BYTES = 1024 * 1024 * 1024  # 1 GB
 
 
 def _file_sha256(path: str) -> str:
@@ -998,12 +1005,6 @@ def _worker_watchdog(state, poll_s: float = 1.0):
 # ===========================================================================
 # Mock mode — synthetic packet injector (SDR_TYPE=mock)
 # ===========================================================================
-
-_MOCK_DEVICES = [
-    (0xABCD1234, 1, "chipset-A"),
-    (0xDEADBEEF, 1, "chipset-B"),
-]
-
 
 def _mock_injector(state, interval_s: float = 2.0):
     """Emit one synthetic packet per device every *interval_s* seconds."""

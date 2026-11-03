@@ -25,9 +25,10 @@ from stream_web.app import _capture_lock, app
 from stream_web.spectrogram import evaluate_fcc_compliance, spectrum_traces
 
 SR = config.SAMPLE_RATE
-# Arbitrary test LO -- evaluate_fcc_compliance only cares about frequencies
-# relative to it, so this doesn't need to match any real config default.
-_TEST_LO_HZ = 903_000_000.0
+# evaluate_fcc_compliance only cares about frequencies relative to the LO, so
+# this doesn't need to match any real config default -- use it anyway so the
+# synthetic spectra sit where the sat link actually operates.
+_TEST_LO_HZ = float(config.CENTER_FREQ_HZ)
 
 
 # ---------------------------------------------------------------------------
