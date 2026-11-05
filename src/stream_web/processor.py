@@ -88,6 +88,7 @@ def processor_main(shm_name, buf_write_idx_val, rx_peak_frac_val,
 
     while running_event.is_set():
         t0 = time.perf_counter()
+        wall_t0 = time.time()
 
         widx = buf_write_idx_val.value
 
@@ -239,6 +240,9 @@ def processor_main(shm_name, buf_write_idx_val, rx_peak_frac_val,
             decode_entries.append({
                 "timestamp": ts,
                 "unix_ts": unix_ts,
+                # Wall-clock estimate of when the packet started on air: the
+                # decode chunk ends at the write index read just after wall_t0
+                "rx_start_unix_ts": wall_t0 - (config.DECODE_WINDOW_S - pkt.get("time_s", 0.0)),
                 "phy_ver": ver,
                 "ntw_id": pkt["ntw_id"],
                 "ntw_id_hex": ntw_hex,

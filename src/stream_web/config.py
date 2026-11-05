@@ -62,6 +62,12 @@ SDR_TYPE = os.environ.get("SDR_TYPE", "pluto").lower()
 # -- PlutoSDR connection (ignored when SDR_TYPE != "pluto") -----------------
 PLUTO_URI = os.environ.get("PLUTO_URI", "ip:192.168.2.1")
 
+# -- HITL log harvester annotations (off unless HITL_ANNOTATE is set) -------
+# Posts every decoded packet to the hitl-log-harvester's POST /annotations, so
+# the warehouse can match it to the device log line of the board that sent it.
+HITL_ANNOTATE = os.environ.get("HITL_ANNOTATE", "").strip().lower() in ("1", "true", "yes", "on")
+HITL_HARVESTER_SOCKET = os.environ.get("HITL_HARVESTER_SOCKET", "/run/hitl/harvester.sock")
+
 # -- Radio parameters (shared across SDR backends) -------------------------
 CENTER_FREQ_HZ = 2_482_440_375
 SAMPLE_RATE = 781_250  # 6.25 MHz / 8

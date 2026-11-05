@@ -29,6 +29,7 @@ docker run -p 8050:8050 sdr-docker
 - `src/stream_web/gnuradio_tx.py` — GNU Radio TX flowgraph using gr-soapy (full-duplex, tone + IQ file playback)
 - `src/stream_web/spectrogram.py` — spectrogram image rendering (PIL/matplotlib)
 - `src/stream_web/processor.py` — decode + spectrogram loop (separate OS process)
+- `src/stream_web/hitl.py` — posts decoded packets to the hitl-log-harvester's `POST /annotations` (Unix socket) when `HITL_ANNOTATE=1` (phy v1 packets only)
 - `src/stream_web/app.py` — Flask web app, API routes (RX/TX/file upload), process orchestration
 - `run_stream.py` — entry point (supervisor: auto-restarts on SDR connection loss)
 
@@ -41,7 +42,7 @@ docker run -p 8050:8050 sdr-docker
 ## API endpoints
 
 ### RX
-- `GET /api/status` — system status, RX metrics, peak power; includes `sdr_connected` (bool) indicating whether the SDR hardware is currently open
+- `GET /api/status` — system status, RX metrics, peak power; includes `sdr_connected` (bool) indicating whether the SDR hardware is currently open, and `hitl_annotations` (harvester post counters, or null when off)
 - `GET /api/packets` — poll-and-drain decoded packets (NDJSON)
 - `GET /api/iq_capture?seconds=N` — record N s (1–30, default 10) of raw IQ forward from now; returns a `.npy` (complex64) download with `X-Sample-Rate-Hz` / `X-Center-Freq-Hz` / `X-N-Samples` headers
 - `GET /api/record_analyze?seconds=N` — record N s (1–30, default 10) and return a plain-text diagnostic report file: for a representative decoded packet, per-symbol timing (duration/gap/drift), per-symbol frequency vs expected channel window, and per-symbol amplitude/SNR, plus chipset/synth-res, frequency offset, and RS corrections; analyzes decoded packets only; backs `hubblenetwork sat record`

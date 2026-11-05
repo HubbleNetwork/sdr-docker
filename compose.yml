@@ -7,9 +7,15 @@ services:
     environment:
       - SDR_TYPE=${SDR_TYPE:-pluto}
       - PLUTO_URI=${PLUTO_URI:-ip:192.168.2.1}
+      # HITL_ANNOTATE=1 posts decoded packets to the HITL log harvester;
+      # also uncomment the /run/hitl volume below
+      - HITL_ANNOTATE=${HITL_ANNOTATE:-}
+      - HITL_HARVESTER_SOCKET=${HITL_HARVESTER_SOCKET:-/run/hitl/harvester.sock}
 
     volumes:
       - ./:/app
+      # HITL log harvester socket folder (on a HITL hub, with HITL_ANNOTATE=1):
+      #   - /run/hitl:/run/hitl
 
     ports:
       - "8050:8050"
