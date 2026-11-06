@@ -23,6 +23,7 @@ import numpy as np
 from hubble_satnet_decoder import compute_spec_chunk, decode_signal, get_chipset_stats
 
 from . import config
+from .rx_failures import FailureTracker
 from .spectrogram import render_spec_image
 from .td_capture import TdCaptureState, select_td_capture
 from .timing import correct_symbol_edges, edges_to_timing_stats
@@ -53,6 +54,14 @@ def processor_main(shm_name, buf_write_idx_val, rx_peak_frac_val,
     # target tracking) lives in this object; all the decision logic is the
     # pure, unit-tested select_td_capture() in td_capture.py.
     td_state = TdCaptureState()
+
+    # Packets that failed to decode, one per real packet (see rx_failures.py).
+    # It keeps time on a sample clock: samples written to the ring buffer,
+    # counted from how far the write index moved each cycle (right while a
+    # cycle takes less than IQ_BUFFER_DURATION_S).
+    fail_tracker = FailureTracker()
+    prev_widx = None
+    samples_written = 0
 
     # Time-domain plot rendering (matplotlib, much heavier than the main
     # spectrogram tile) is done entirely by the separate td_renderer process
@@ -95,6 +104,10 @@ def processor_main(shm_name, buf_write_idx_val, rx_peak_frac_val,
         wall_t0 = time.time()
 
         widx = buf_write_idx_val.value
+        if prev_widx is not None:
+            samples_written += (widx - prev_widx) % buf_len
+        prev_widx = widx
+        lo_hz = int(lo_freq_val.value)
 
         # Drain drop positions from queue
         drop_positions = []
@@ -261,8 +274,24 @@ def processor_main(shm_name, buf_write_idx_val, rx_peak_frac_val,
                 "header_n_corr": pkt.get("header_n_corr"),
                 "pdu_n_corr": pkt.get("pdu_n_corr"),
                 "num_pdu_symbols": pkt.get("num_pdu_symbols"),
+                "lo_hz": lo_hz,
+                # Received codewords before RS correction (decoder >= 1.3)
+                "header_syms": pkt.get("header_syms"),
+                "header_err_pos": pkt.get("header_err_pos"),
+                "pdu_syms_rx": pkt.get("pdu_syms_rx"),
+                "pdu_err_pos": pkt.get("pdu_err_pos"),
                 **timing,
             })
+
+        # The decode chunk ends at the write index read just after wall_t0
+        decode_failures = fail_tracker.update(
+            samples_written / config.SAMPLE_RATE, attempts, wall_t0,
+            lo_offset_hz=lo_hz - config.CENTER_FREQ_HZ,
+            drop_offsets_s=[d / config.SAMPLE_RATE for d in drop_sample_offsets],
+        )
+        for f in decode_failures:
+            f["unix_ts"] = unix_ts
+            f["lo_hz"] = lo_hz
 
         stats = {
             "process_time_ms": round(dt_ms, 1),
@@ -331,6 +360,7 @@ def processor_main(shm_name, buf_write_idx_val, rx_peak_frac_val,
             "img": img_bytes,
             "detections": detections,
             "decode_entries": decode_entries,
+            "decode_failures": decode_failures,
             "stats": stats,
             "chipset_stats": get_chipset_stats(),
             "td_img": td_img,
