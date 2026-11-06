@@ -3,6 +3,8 @@ services:
     image: pluto_container
     container_name: pluto_container
     working_dir: /app
+    # tini as PID 1 reaps worker processes left by a crash (see README, Run)
+    init: true
 
     environment:
       - SDR_TYPE=${SDR_TYPE:-pluto}

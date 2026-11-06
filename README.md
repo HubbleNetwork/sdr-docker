@@ -142,25 +142,30 @@ docker build -t sdr-docker .
 
 ### 3. Run
 
+Always pass `--init` (Compose: `init: true`). The app's PID 1 is a small
+supervisor (`run_stream.py`) that restarts it when the SDR drops; it doesn't
+reap processes it didn't start, so a worker process left behind by a crash
+would stay a zombie. `--init` makes Docker's `tini` PID 1, which reaps them.
+
 #### PlutoSDR over Ethernet (default)
 
 No special flags needed — the container reaches Pluto at `192.168.2.1` via the
 host network stack:
 
 ```shell
-docker run --restart unless-stopped -d -p 8050:8050 sdr-docker
+docker run --init --restart unless-stopped -d -p 8050:8050 sdr-docker
 ```
 
 Or use the pre-built image from GitHub Container Registry:
 
 ```shell
-docker run --restart unless-stopped -d -p 8050:8050 ghcr.io/hubblenetwork/sdr-docker:latest
+docker run --init --restart unless-stopped -d -p 8050:8050 ghcr.io/hubblenetwork/sdr-docker:latest
 ```
 
 To use a different Pluto IP:
 
 ```shell
-docker run --restart unless-stopped -d -p 8050:8050 \
+docker run --init --restart unless-stopped -d -p 8050:8050 \
   -e PLUTO_URI=ip:192.168.3.1 sdr-docker
 ```
 
@@ -169,7 +174,7 @@ docker run --restart unless-stopped -d -p 8050:8050 \
 Pass the USB bus into the container:
 
 ```shell
-docker run --restart unless-stopped -d -p 8050:8050 \
+docker run --init --restart unless-stopped -d -p 8050:8050 \
   --privileged \
   -e PLUTO_URI=usb: \
   sdr-docker
@@ -178,7 +183,7 @@ docker run --restart unless-stopped -d -p 8050:8050 \
 Or, for tighter security, map only `/dev/bus/usb`:
 
 ```shell
-docker run --restart unless-stopped -d -p 8050:8050 \
+docker run --init --restart unless-stopped -d -p 8050:8050 \
   --device=/dev/bus/usb \
   -e PLUTO_URI=usb: \
   sdr-docker
@@ -187,7 +192,7 @@ docker run --restart unless-stopped -d -p 8050:8050 \
 #### bladeRF Micro A4 (USB)
 
 ```shell
-docker run --restart unless-stopped -d -p 8050:8050 \
+docker run --init --restart unless-stopped -d -p 8050:8050 \
   --privileged \
   -e SDR_TYPE=bladerf \
   sdr-docker
@@ -590,7 +595,7 @@ the firmware's `HBLR1` `sat_tx` record for every satellite packet a board sends.
 Mount the harvester's socket folder into the container:
 
 ```shell
-docker run --restart unless-stopped -d -p 8050:8050 \
+docker run --init --restart unless-stopped -d -p 8050:8050 \
   -v /run/hitl:/run/hitl -e HITL_ANNOTATE=1 sdr-docker
 ```
 
@@ -724,7 +729,9 @@ AD9361 in it forever (the image patches this, see
 restarts about every 35 s.
 
 Before exiting, the app stops its worker processes (processor and renderers);
-each worker also stops by itself if the main process is gone.
+each worker also stops by itself if the main process is gone (for example
+after a crash). Run the container with `--init` / `init: true` so those
+exited workers are reaped rather than left as zombies (see [Run](#3-run)).
 
 For native (non-Docker) usage, wrap the command in a process supervisor or a
 simple restart loop:
