@@ -12,7 +12,10 @@ When the SDR connection drops mid-stream (e.g. network glitch, PlutoSDR power
 cycle), libiio cannot recover within the same process -- a new iio_context
 still inherits the broken pipe state.  Therefore this module exits the process
 on connection loss, relying on Docker's restart policy (or a supervisor) to
-bring up a clean instance.
+bring up a clean instance.  For the same reason, when the SDR can't be opened
+at start (unplugged, or a PlutoSDR still booting), it only retries in-process
+SDR_OPEN_ATTEMPTS_BEFORE_RESTART times before exiting for a fresh process:
+driver or libiio state left by a failed open must not block every later one.
 """
 
 from __future__ import annotations
@@ -207,7 +210,7 @@ def rx_loop(state: SharedState) -> None:
                   "exiting so Docker/supervisor can restart.",
                   flush=True)
             _teardown(fg, state)
-            os._exit(_EXIT_CODE_CONNECTION_LOST)
+            _exit_for_restart(state)
 
         if config.RX_GAIN_MODE == "manual" and state.rx_gain_dB != cur_gain:
             new_gain = int(
@@ -244,7 +247,9 @@ def _connect(state: SharedState) -> SDRFlowgraph | None:
     """Try to create and start the flowgraph, retrying until success or
     ``state.running`` is cleared.
     """
+    attempts = 0
     while state.running.is_set():
+        attempts += 1
         try:
             fg = SDRFlowgraph(state)
             fg.start()
@@ -255,9 +260,15 @@ def _connect(state: SharedState) -> SDRFlowgraph | None:
                   f"gain={config.RX_INITIAL_GAIN_DB} dB")
             return fg
         except Exception as e:
+            if attempts >= config.SDR_OPEN_ATTEMPTS_BEFORE_RESTART:
+                print(f"[RX] SDR not found ({e}) after {attempts} attempts; "
+                      "exiting so Docker/supervisor can retry in a fresh process.",
+                      flush=True)
+                _exit_for_restart(state)
             print(
                 f"[RX] SDR not found ({e}), "
-                f"retrying in {config.SDR_RETRY_INTERVAL_S}s..."
+                f"retrying in {config.SDR_RETRY_INTERVAL_S}s "
+                f"({attempts}/{config.SDR_OPEN_ATTEMPTS_BEFORE_RESTART})..."
             )
             for _ in range(config.SDR_RETRY_INTERVAL_S * 10):
                 if not state.running.is_set():
@@ -265,6 +276,27 @@ def _connect(state: SharedState) -> SDRFlowgraph | None:
                     return None
                 time.sleep(0.1)
     return None
+
+
+_WORKER_STOP_TIMEOUT_S = 3.0
+
+
+def _exit_for_restart(state: SharedState) -> None:
+    """Stop the worker processes, then exit with the code the supervisor restarts on.
+
+    os._exit skips multiprocessing's cleanup, so without this the processor and
+    renderer processes would outlive us (their loops only watch state.running)
+    and pile up with every restart.
+    """
+    state.running.clear()
+    workers = list(getattr(state, "workers", {}).values())
+    deadline = time.monotonic() + _WORKER_STOP_TIMEOUT_S
+    for proc in workers:
+        proc.join(timeout=max(0.0, deadline - time.monotonic()))
+    for proc in workers:
+        if proc.is_alive():
+            proc.terminate()  # stuck, e.g. flushing a queue nobody reads any more
+    os._exit(_EXIT_CODE_CONNECTION_LOST)
 
 
 def _teardown(fg: SDRFlowgraph, state: SharedState) -> None:

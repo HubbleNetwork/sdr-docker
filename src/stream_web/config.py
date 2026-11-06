@@ -146,6 +146,9 @@ FLASK_PORT = 8050
 VERBOSE = False
 MAX_DECODE_HISTORY = 200
 SDR_RETRY_INTERVAL_S = 3
+# Failed opens before exiting for a fresh process (see gnuradio_rx.py): about
+# 30 s of retries, after which a still-missing SDR restarts the app every ~35 s.
+SDR_OPEN_ATTEMPTS_BEFORE_RESTART = 10
 
 # -- Time-domain viewer ----------------------------------------------------
 TD_WINDOW_S = 0.75

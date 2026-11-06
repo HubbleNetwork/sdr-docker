@@ -713,10 +713,18 @@ Docker's `--restart unless-stopped` policy (or `on-failure`) automatically
 brings up a clean container, which establishes a fresh libiio context and
 reconnects.  A typical recovery cycle takes **5–10 seconds**.
 
-**Initial connection retries still work in-process** — if the SDR is not yet
-available at startup (e.g. device still booting), the code retries every few
-seconds until the device appears.  The exit-on-loss behaviour only applies
-after a successful streaming session drops.
+**Initial connection retries are bounded.** If the SDR can't be opened at
+startup (unplugged, or a PlutoSDR still booting after a replug), the app
+retries every 3 s, `SDR_OPEN_ATTEMPTS_BEFORE_RESTART` times (10, about 30 s),
+then exits with code 3 so the next attempt runs in a fresh process.  State left
+by a failed open must not block every later open: SoapyPlutoSDR, for one, keeps
+a single IIO context per process and used to reuse a context that had no
+AD9361 in it forever (the image patches this, see
+[`patches/`](./patches/)).  While no SDR is attached, the app therefore
+restarts about every 35 s.
+
+Before exiting, the app stops its worker processes (processor and renderers);
+each worker also stops by itself if the main process is gone.
 
 For native (non-Docker) usage, wrap the command in a process supervisor or a
 simple restart loop:

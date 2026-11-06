@@ -40,8 +40,19 @@ RUN apt-get update && \
 # never go through the ld.so cache. Running ldconfig under the arm64 leg's QEMU
 # emulation segfaults intermittently (~12% of calls), which is what made the
 # multi-arch build fail at random steps.
-RUN git clone --depth 1 https://github.com/pothosware/SoapyPlutoSDR.git /tmp/SoapyPlutoSDR && \
-    cd /tmp/SoapyPlutoSDR && mkdir build && cd build && \
+#
+# Pinned so the patch below keeps applying. The patch drops the driver's
+# process-wide IIO context when an open fails: otherwise a context made while
+# the Pluto was unplugged or still booting is reused by every later open, and
+# the app never reconnects after a replug. To move the pin, check the patch
+# still applies and is still needed upstream.
+ARG SOAPYPLUTOSDR_COMMIT=0046115838a3c024e5f5869701c45a8d85060d6e
+COPY patches/soapyplutosdr-reset-context-on-open-failure.patch /tmp/
+RUN git init -q /tmp/SoapyPlutoSDR && cd /tmp/SoapyPlutoSDR && \
+    git fetch -q --depth 1 https://github.com/pothosware/SoapyPlutoSDR.git "$SOAPYPLUTOSDR_COMMIT" && \
+    git checkout -q FETCH_HEAD && \
+    git apply /tmp/soapyplutosdr-reset-context-on-open-failure.patch && \
+    mkdir build && cd build && \
     cmake .. && make -j"$(nproc)" && make install && \
     cd / && rm -rf /tmp/SoapyPlutoSDR
 

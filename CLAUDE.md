@@ -32,6 +32,7 @@ docker run -p 8050:8050 sdr-docker
 - `src/stream_web/hitl.py` — posts decoded packets to the hitl-log-harvester's `POST /annotations` (Unix socket) when `HITL_ANNOTATE=1` (phy v1 packets only)
 - `src/stream_web/app.py` — Flask web app, API routes (RX/TX/file upload), process orchestration
 - `run_stream.py` — entry point (supervisor: auto-restarts on SDR connection loss)
+- `patches/` — patches applied to source-built dependencies in the Dockerfile (SoapyPlutoSDR, pinned by commit)
 
 ## Key dependencies
 

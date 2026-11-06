@@ -16,6 +16,7 @@ Communicates via two multiprocessing.Queue instances:
                          key is intentional)
 """
 
+import os
 import queue
 
 from .spectrogram import render_spectrum_image
@@ -25,7 +26,10 @@ def spectrum_renderer_main(spectrum_job_queue, result_queue, running_event):
     """Entry point for the spectrum-analyzer renderer process."""
     print("[SPECTRUM-PROC] Renderer process started (separate GIL).", flush=True)
 
-    while running_event.is_set():
+    # Stop if the main process is gone (it exits with os._exit on SDR loss, or
+    # may crash): its running_event would never be cleared and we'd be orphaned.
+    parent_pid = os.getppid()
+    while running_event.is_set() and os.getppid() == parent_pid:
         try:
             chunks, lo_freq_hz = spectrum_job_queue.get(timeout=0.5)
         except queue.Empty:

@@ -1,0 +1,16 @@
+diff --git a/PlutoSDR_Settings.cpp b/PlutoSDR_Settings.cpp
+index 134cfee..300ab12 100644
+--- a/PlutoSDR_Settings.cpp
++++ b/PlutoSDR_Settings.cpp
+@@ -37,6 +37,11 @@ SoapyPlutoSDR::SoapyPlutoSDR( const SoapySDR::Kwargs &args ):
+ 	tx_dev = iio_context_find_device(ctx, "cf-ad9361-dds-core-lpc");
+ 
+ 	if (dev == nullptr || rx_dev == nullptr || tx_dev == nullptr) {
++		// The context is shared by every later open in this process: drop it,
++		// or a context made while the Pluto was unplugged or still booting is
++		// reused forever and every retry fails the same way.
++		iio_context_destroy(ctx);
++		ctx = nullptr;
+ 		SoapySDR_logf(SOAPY_SDR_ERROR, "no device found in this context.");
+ 		throw std::runtime_error("no device found in this context");
+ 	}
