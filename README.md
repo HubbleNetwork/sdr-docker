@@ -100,7 +100,7 @@ dependencies and their build steps.
 | `SDR_TYPE` | `pluto` | SDR backend: `pluto` or `bladerf` |
 | `PLUTO_URI` | `ip:192.168.2.1` | PlutoSDR connection URI (e.g. `ip:192.168.2.1` or `usb:`) |
 | `BLADERF_SERIAL` | *(empty)* | Optional bladeRF serial number for multi-device setups |
-| `HITL_ANNOTATE` | *(off)* | `1` posts every decoded phy v1 packet to the HITL log harvester (see [HITL harvester annotations](#hitl-harvester-annotations)) |
+| `HITL_ANNOTATE` | *(off)* | `1` posts every decoded phy v1 packet, and each one that was detected but failed to decode, to the HITL log harvester (see [HITL harvester annotations](#hitl-harvester-annotations)) |
 | `HITL_HARVESTER_SOCKET` | `/run/hitl/harvester.sock` | The harvester's Unix socket |
 
 ---
@@ -618,7 +618,14 @@ volume in [`compose.yml`](./compose.yml).
 | `energy_db`, `freq_delta_hz`, `chipset` | Signal level, frequency offset, chipset estimate |
 | `rs_corr_header`, `rs_corr_pdu` | Reed-Solomon corrections |
 | `num_pdu_symbols`, `payload_bytes`, `payload_hex` | PDU size and payload (`payload_hex` has `2 × payload_bytes` digits) |
-| `sdr`, `center_freq_hz` | Receiver |
+| `hdr_syms_rx`, `pdu_syms_rx` | Header and PDU codewords as received, before Reed-Solomon correction: two hex digits per 6-bit symbol. The PDU is de-whitened, so it lines up symbol for symbol with the codeword RS corrects and with the device's `sym` (see below) |
+| `hdr_err_pos`, `pdu_err_pos` | Symbol positions in those codewords that RS corrected (`[]` when none). RS can "correct" to the wrong codeword when there are too many errors, so for ground truth compare with the device's `sym` |
+| `sdr`, `center_freq_hz` | Receiver, and the LO it was tuned to when the packet was decoded |
+
+The received codewords and error positions need hubble-satnet-decoder 1.3 or later;
+with an older decoder they are left out. The `*_err_pos` lists are SUPER arrays:
+`GET_ARRAY_LENGTH(rx.extra.data.pdu_err_pos)` counts them, `rx.extra.data.pdu_err_pos[0]`
+indexes them.
 
 `device` and `extra` are SUPER columns, so use dot paths rather than
 `JSON_EXTRACT_PATH_TEXT`, and quote `"tag"` (a reserved word). A sequence number wraps
@@ -647,11 +654,118 @@ WHERE tx.kind = 'record' AND tx.evt = 'sat_tx'
   AND rx.host_rx_utc > DATEADD(day, -1, GETDATE());
 ```
 
+#### Which symbols were received wrong
+
+The device's `sat_tx` record has `sym`: the PDU codeword it sent, before whitening, two hex
+digits per symbol, the same format as `pdu_syms_rx`. Comparing the two pair by pair
+(characters `2i`, `2i+1` are symbol `i`) gives the symbols the SDR got wrong, whether RS
+corrected them or not. Whitening is a per-symbol XOR, so the positions are the same on
+air; to see how far off a received tone was (in FSK bins), XOR both sides with the
+whitening sequence for `ch0` (`hubble_satnet_decoder.whitening.lfsr7_symbols(ch0, n)`)
+first. The device doesn't log the header.
+
+```sql
+SELECT tx.port, tx.seq, tx.device.sym::VARCHAR AS sent,
+       rx.extra.data.pdu_syms_rx::VARCHAR AS received,
+       rx.extra.data.pdu_err_pos AS rs_corrected
+FROM ...  -- the sat_tx / sat_rx join above
+```
+
+#### Packets that failed to decode: `sat_rx_fail`
+
+A phy v1 packet whose preamble and header were found but whose PDU failed Reed-Solomon
+correction is posted as `name='sat_rx_fail'`, once per packet. Each real packet also
+triggers false ("phantom") detections inside its own data symbols, and overlapping decode
+windows see each packet two or three times, so failures are filtered first (see
+`src/stream_web/rx_failures.py`):
+
+- only `pdu_fail` is reported. `header_fail` is tracked, so it still absorbs its own
+  phantoms and gives way to a `pdu_fail` of the same packet in a later window, but it isn't
+  posted: on air most header failures arrive at full strength (median −43 dB against
+  −69 dB for `pdu_fail`), so they are mostly false detections, not weak packets.
+  `snr_fail` (no clear preamble) and `pdu_incomplete` (cut off by the decode window and
+  tried again in the next) aren't considered;
+- the measured synth resolution has to be within 3% of the identified chipset's;
+- a failure that starts inside another packet (decoded, cut short, or failed) at a
+  frequency that packet is on at that moment (from its hopping sequence) is taken for a
+  phantom of it and dropped. Packets from other boards on other channels are kept; one
+  that happens to start inside another packet's band at that moment is lost;
+- a failure that starts 1–8 slots before another packet, at the same F0 or 63 tone steps
+  higher, is that packet's preamble read from too early a start (its `hdr_syms_rx` begins
+  with the end of the preamble, `3f003f3f…`) and is dropped; the later packet is kept;
+- the same packet seen in several windows (same start and frequency) is reported once,
+  keeping the attempt that got furthest.
+
+Times are kept on the count of samples received, so a stalled SDR or a wall-clock step
+doesn't duplicate failures. A failure is posted once no later window can contain it, about
+2–2.6 s after it started on air.
+
+| Key | Meaning |
+|-----|---------|
+| `evt` | Always `sat_rx_fail` |
+| `reason` | `pdu_fail` |
+| `sample_drop` | `true` when the SDR dropped samples during the packet (not an RF failure); absent otherwise |
+| `ch0` | Channel of the first frame, from the header. A header RS miscorrection makes it wrong |
+| `ch0_est` | Channel of the first frame from the packet's frequency, always (absent if out of range). The chipset's typical frequency offset, learned from its decoded packets, is taken off first: TI and ESP boards run 20–35 kHz high, more than half a channel |
+| `f_center_hz`, `chipset_offset_hz` | Packet centre relative to the channel-9 centre (`CENTER_FREQ_HZ`), and the offset taken off it for `ch0_est` (absent until 5 packets of that chipset decoded) |
+| `rx_start_utc` | As for `sat_rx` |
+| `reported_utc` | When the failure was settled and posted, ~2 s after `rx_start_utc` |
+| `energy_db`, `f0_hz`, `chipset`, `synth_res`, `score` | Preamble level, frequency of symbol 0 relative to the SDR centre, chipset, measured synth resolution, detection score |
+| `hop_seq_idx`, `pkt_len_idx`, `num_pdu_symbols`, `rs_corr_header` | From the header |
+| `hdr_syms_rx` | The header as received (always) |
+| `pdu_syms_rx`, `hdr_err_pos` | The de-whitened PDU as received, and the header symbols RS corrected (`pdu_fail` only) |
+| `phy_ver`, `sdr`, `center_freq_hz` | As for `sat_rx` |
+
+There is no `seq`, `eid` or `tag`, so a failure matches a device's `sat_tx` only by
+channel and time. The failure is written about 0.5–3 s after the device's line, and each
+board sends every ~10 s, so the query below keeps the nearest `sat_tx` on the same channel
+(with no `sat_rx`) for each failure. Pairing decoded `sat_rx` rows on wa-02 the same way
+(2 h on 6 Nov 2026) matched all 764 packets from its own boards to the right board, but the
+SDR also hears devices that aren't on the hub, and 298 of their packets paired with a hub
+board's `sat_tx` on the same channel. Their failures will too, so expect some pairs that
+aren't the board's packet, especially on a hub near other test benches:
+
+```sql
+WITH tx AS (
+  SELECT hostname, port, line_no, seq, host_rx_utc, device.ch[0]::INT AS ch0,
+         device.eid::VARCHAR AS eid, device.sym::VARCHAR AS sym
+  FROM dw.hitl_test_runner_logs t
+  WHERE kind = 'record' AND evt = 'sat_tx'
+    AND host_rx_utc > DATEADD(day, -1, GETDATE())
+    AND NOT EXISTS (
+      SELECT 1 FROM dw.hitl_test_runner_logs rx
+      WHERE rx.hostname = t.hostname AND rx.kind = 'annotation'
+        AND rx.extra.name::VARCHAR = 'sat_rx'
+        AND rx.extra.data.eid::VARCHAR = t.device.eid::VARCHAR
+        AND rx.extra.data.seq::BIGINT = t.seq
+        AND rx.host_rx_utc BETWEEN t.host_rx_utc - INTERVAL '3 seconds'
+                               AND t.host_rx_utc + INTERVAL '5 seconds')
+), f AS (
+  SELECT hostname, line_no, host_rx_utc, extra.data AS d,
+         COALESCE(extra.data.ch0::INT, extra.data.ch0_est::INT) AS ch0
+  FROM dw.hitl_test_runner_logs
+  WHERE kind = 'annotation' AND extra.name::VARCHAR = 'sat_rx_fail'
+    AND host_rx_utc > DATEADD(day, -1, GETDATE())
+)
+SELECT * FROM (
+  SELECT tx.port, tx.eid, tx.seq, tx.host_rx_utc AS tx_utc, tx.sym,
+         f.d.reason::VARCHAR AS reason, f.d.energy_db::FLOAT AS energy_db,
+         f.d.pdu_syms_rx::VARCHAR AS pdu_syms_rx,
+         ROW_NUMBER() OVER (PARTITION BY f.hostname, f.line_no, f.host_rx_utc
+                            ORDER BY ABS(DATEDIFF(ms, tx.host_rx_utc, f.host_rx_utc) - 1500)) AS rn
+  FROM f JOIN tx
+    ON tx.hostname = f.hostname AND tx.ch0 = f.ch0
+   AND f.host_rx_utc BETWEEN tx.host_rx_utc - INTERVAL '1 second'
+                         AND tx.host_rx_utc + INTERVAL '4 seconds'
+) AS paired
+WHERE rn = 1;
+```
+
 Posting runs on its own thread with a 1000-entry queue and never slows decoding. Nothing
 is retried: a post the harvester refuses, or can't take because it is down or the socket is
 missing, counts as `failed`; one that doesn't fit in a full queue counts as `dropped`. The
 first failure and the recovery are logged. `/api/status` reports `hitl_annotations`
-(`sent`, `failed`, `dropped`, `skipped` (legacy v-1 packets), `queued`, `alive` (the
+(`sent`, `sent_by_name` (per annotation name), `failed`, `dropped`, `skipped` (legacy v-1 packets), `queued`, `alive` (the
 posting thread is running), `ok` (alive and the last post succeeded)), or `null` when
 annotations are off. Mock mode (`SDR_TYPE=mock`) never posts.
 

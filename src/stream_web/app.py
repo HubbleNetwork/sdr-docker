@@ -941,6 +941,8 @@ def _drain_results(state, annotator=None):
             continue
         if annotator is not None and r.get("decode_entries"):
             annotator.submit(r["decode_entries"])
+        if annotator is not None and r.get("decode_failures"):
+            annotator.submit_failures(r["decode_failures"])
         with state.lock:
             if r.get("img"):
                 state.latest_img = r["img"]

@@ -29,7 +29,8 @@ docker run -p 8050:8050 sdr-docker
 - `src/stream_web/gnuradio_tx.py` — GNU Radio TX flowgraph using gr-soapy (full-duplex, tone + IQ file playback)
 - `src/stream_web/spectrogram.py` — spectrogram image rendering (PIL/matplotlib)
 - `src/stream_web/processor.py` — decode + spectrogram loop (separate OS process)
-- `src/stream_web/hitl.py` — posts decoded packets to the hitl-log-harvester's `POST /annotations` (Unix socket) when `HITL_ANNOTATE=1` (phy v1 packets only)
+- `src/stream_web/hitl.py` — posts decoded packets (`sat_rx`, with the codewords as received before RS correction) and failed ones (`sat_rx_fail`) to the hitl-log-harvester's `POST /annotations` (Unix socket) when `HITL_ANNOTATE=1` (phy v1 packets only)
+- `src/stream_web/rx_failures.py` — picks one `sat_rx_fail` per real failed packet out of the decoder's attempts (drops phantom detections and cross-window repeats)
 - `src/stream_web/app.py` — Flask web app, API routes (RX/TX/file upload), process orchestration
 - `run_stream.py` — entry point (supervisor: auto-restarts on SDR connection loss)
 - `patches/` — patches applied to source-built dependencies in the Dockerfile (SoapyPlutoSDR, pinned by commit)

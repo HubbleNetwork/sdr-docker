@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 
 from stream_web.app import _drain_results, app, state
-from stream_web.hitl import HarvesterAnnotator, annotation_data
+from stream_web.hitl import HarvesterAnnotator, annotation_data, failure_annotation_data
 
 ENTRY = {
     "phy_ver": 1, "ntw_id": 0x03316DBA, "seq_num": 42, "auth_tag": 0x1A2B3C4D,
@@ -93,6 +93,61 @@ def test_nan_and_missing_fields_are_left_out():
     assert not any(isinstance(v, float) and not math.isfinite(v) for v in data.values())
 
 
+def test_received_codewords_and_error_positions():
+    data = annotation_data({**ENTRY, "header_syms": [16, 4, 63, 0, 7, 33],
+                            "header_err_pos": [], "pdu_err_pos": [3, 21],
+                            "pdu_syms_rx": np.array([5, 0, 63])})
+    assert data["hdr_syms_rx"] == "10043f000721"
+    assert data["pdu_syms_rx"] == "05003f"
+    assert data["hdr_err_pos"] == [] and data["pdu_err_pos"] == [3, 21]
+    json.dumps(data, allow_nan=False)
+    # An older decoder without these fields: left out
+    raw_keys = {"hdr_syms_rx", "pdu_syms_rx", "hdr_err_pos", "pdu_err_pos"}
+    assert not raw_keys & annotation_data(ENTRY).keys()
+
+
+FAILURE = {
+    "phy_ver": 1, "decoded": False, "reason": "pdu_fail+sample_drop", "time_s": 0.4,
+    "chipset": "nordic", "measured_synth_res": 488.1, "synth_res_val": 488.28125,
+    "F0_hz": np.float64(-144125.0), "energy_dB": -26.1, "score": 1.0,
+    "channel_num": 4, "hop_seq_idx": 1, "pkt_len_idx": 1, "num_pdu_symbols": 30,
+    "header_n_corr": 0, "header_syms": [16, 4, 63, 0, 7, 33], "header_err_pos": [],
+    "pdu_syms_rx": [5, 0, 63], "rx_start_unix_ts": 1_791_000_000.0, "unix_ts": 1_791_000_002.0,
+    "ch0_est": 4, "f_center_hz": -128745.3, "chipset_offset_hz": np.float64(8_412.6),
+    "sample_drop": False, "lo_hz": 2_482_465_375,
+}
+
+
+def test_failure_data():
+    data = failure_annotation_data(FAILURE, center_freq_hz=2_482_440_375, sdr_type="pluto")
+    assert data["evt"] == "sat_rx_fail"
+    assert data["reason"] == "pdu_fail" and data["sample_drop"] is True
+    assert data["ch0"] == 4 and data["ch0_est"] == 4  # both, so disagreements show
+    assert (data["f_center_hz"], data["chipset_offset_hz"]) == (-128745, 8413)
+    assert data["center_freq_hz"] == 2_482_465_375  # the LO then, not the startup one
+    assert data["rx_start_utc"] == "2026-10-03T04:00:00.000Z"
+    assert data["reported_utc"] == "2026-10-03T04:00:02.000Z" and "decoded_utc" not in data
+    assert data["hdr_syms_rx"] == "10043f000721" and data["pdu_syms_rx"] == "05003f"
+    assert type(data["f0_hz"]) is int  # numpy float, rounded to the Hz
+    assert not {"seq", "eid", "tag"} & data.keys()
+    json.dumps(data, allow_nan=False)
+
+    header_fail = {k: v for k, v in FAILURE.items()
+                   if k not in ("channel_num", "hop_seq_idx", "pkt_len_idx", "num_pdu_symbols",
+                                "header_n_corr", "header_err_pos", "pdu_syms_rx")}
+    data = failure_annotation_data({**header_fail, "reason": "header_fail", "ch0_est": 4})
+    assert data["reason"] == "header_fail" and "sample_drop" not in data
+    assert failure_annotation_data({**FAILURE, "reason": "pdu_fail",
+                                    "sample_drop": True})["sample_drop"] is True
+    assert data["ch0_est"] == 4 and "ch0" not in data and "pdu_syms_rx" not in data
+
+
+def test_unknown_annotation_name_is_refused(harvester):
+    ann = HarvesterAnnotator(harvester[0])
+    with pytest.raises(ValueError):
+        ann.submit([ENTRY], name="bogus")
+
+
 def test_posts_each_entry(harvester):
     path, received, _ = harvester
     ann = HarvesterAnnotator(path, sdr_type="pluto").start()
@@ -159,11 +214,15 @@ def test_drain_loop_submits_decoded_packets_and_status_reports_them(harvester):
             {**ENTRY, "ntw_id_hex": "0x03316DBA", "timestamp": "17:20:00",
              "energy_dB": -61.2, "freq_delta_hz": 812.5}]})
         state.result_queue.put({"stats": {}})  # a result without packets posts nothing
-        assert _wait(lambda: ann.sent == 1)
+        state.result_queue.put({"decode_failures": [FAILURE]})
+        assert _wait(lambda: ann.sent == 2)
+        assert [(b["name"], b["data"]["evt"]) for _, b in received] == [
+            ("sat_rx", "sat_rx"), ("sat_rx_fail", "sat_rx_fail")]
         assert received[0][1]["data"]["seq"] == 42
         state.hitl_annotator = ann
         status = app.test_client().get("/api/status").get_json()
-        assert status["hitl_annotations"]["sent"] == 1
+        assert status["hitl_annotations"]["sent"] == 2
+        assert status["hitl_annotations"]["sent_by_name"] == {"sat_rx": 1, "sat_rx_fail": 1}
     finally:
         state.hitl_annotator = None
         state.running.clear()
