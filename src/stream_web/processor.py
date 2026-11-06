@@ -13,6 +13,7 @@ trace (FCC-overlay/spur-search + matplotlib draw) is offloaded the same way,
 to spectrum_renderer.py.
 """
 
+import os
 import queue
 import time
 from collections import deque
@@ -86,8 +87,12 @@ def processor_main(shm_name, buf_write_idx_val, rx_peak_frac_val,
 
     print("[PROC] Processor process started (separate GIL).", flush=True)
 
-    while running_event.is_set():
+    # Stop if the main process is gone (it exits with os._exit on SDR loss, or
+    # may crash): its running_event would never be cleared and we'd be orphaned.
+    parent_pid = os.getppid()
+    while running_event.is_set() and os.getppid() == parent_pid:
         t0 = time.perf_counter()
+        wall_t0 = time.time()
 
         widx = buf_write_idx_val.value
 
@@ -239,6 +244,9 @@ def processor_main(shm_name, buf_write_idx_val, rx_peak_frac_val,
             decode_entries.append({
                 "timestamp": ts,
                 "unix_ts": unix_ts,
+                # Wall-clock estimate of when the packet started on air: the
+                # decode chunk ends at the write index read just after wall_t0
+                "rx_start_unix_ts": wall_t0 - (config.DECODE_WINDOW_S - pkt.get("time_s", 0.0)),
                 "phy_ver": ver,
                 "ntw_id": pkt["ntw_id"],
                 "ntw_id_hex": ntw_hex,

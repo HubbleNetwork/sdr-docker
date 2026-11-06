@@ -28,6 +28,7 @@ from flask import request as flask_request
 from hubble_satnet_decoder import compute_spec_chunk, reset_chipset_stats
 
 from . import analysis, config
+from .hitl import HarvesterAnnotator
 from .processor import processor_main
 from .spectrogram import evaluate_fcc_compliance, spectrum_traces
 from .spectrum_renderer import spectrum_renderer_main
@@ -90,6 +91,7 @@ class SharedState:
         self.lock = threading.Lock()
         self.running = mp.Event()
         self.rx_connected = threading.Event()
+        self.hitl_annotator = None  # HarvesterAnnotator when HITL_ANNOTATE is set
 
         # --- shared memory IQ buffer (RX writes, processor reads) ---
         try:
@@ -371,6 +373,8 @@ def api_status():
             known_chipsets=sorted(config.SYNTH_RES.keys()),
             lo_freq_hz=state.lo_freq_hz,
             view_mode=state.view_mode,
+            hitl_annotations=(state.hitl_annotator.stats()
+                              if state.hitl_annotator is not None else None),
         )
 
 
@@ -927,7 +931,7 @@ def api_tx_files_delete(filename):
 # Result drainer — receives processor output via mp.Queue
 # ===========================================================================
 
-def _drain_results(state):
+def _drain_results(state, annotator=None):
     """Background thread: pull results from the processor process."""
     import queue as _queue
     while state.running.is_set():
@@ -935,6 +939,8 @@ def _drain_results(state):
             r = state.result_queue.get(timeout=0.1)
         except _queue.Empty:
             continue
+        if annotator is not None and r.get("decode_entries"):
+            annotator.submit(r["decode_entries"])
         with state.lock:
             if r.get("img"):
                 state.latest_img = r["img"]
@@ -1103,7 +1109,13 @@ def main():
             p.start()
 
         threading.Thread(target=rx_loop, args=(state,), daemon=True).start()
-        threading.Thread(target=_drain_results, args=(state,), daemon=True).start()
+        if config.HITL_ANNOTATE:
+            state.hitl_annotator = HarvesterAnnotator(
+                config.HITL_HARVESTER_SOCKET, center_freq_hz=config.CENTER_FREQ_HZ,
+                sdr_type=config.SDR_TYPE,
+            ).start()
+        threading.Thread(target=_drain_results, args=(state, state.hitl_annotator),
+                         daemon=True).start()
         threading.Thread(target=_worker_watchdog, args=(state,), daemon=True).start()
         print("[main] RX thread + processor/td_renderer/spectrum_renderer processes started.")
 

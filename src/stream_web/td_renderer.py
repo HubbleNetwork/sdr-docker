@@ -14,6 +14,7 @@ Communicates via two multiprocessing.Queue instances:
                        results back to app.py
 """
 
+import os
 import queue
 
 from .spectrogram import render_symbol_zoom_plot, render_td_plot
@@ -23,7 +24,10 @@ def td_renderer_main(td_job_queue, result_queue, running_event):
     """Entry point for the time-domain-plot renderer process."""
     print("[TD-PROC] Renderer process started (separate GIL).", flush=True)
 
-    while running_event.is_set():
+    # Stop if the main process is gone (it exits with os._exit on SDR loss, or
+    # may crash): its running_event would never be cleared and we'd be orphaned.
+    parent_pid = os.getppid()
+    while running_event.is_set() and os.getppid() == parent_pid:
         try:
             td_seg, decode_info, n_syms = td_job_queue.get(timeout=0.5)
         except queue.Empty:

@@ -54,6 +54,7 @@ src/stream_web/
 ├── sdr.py             # Re-exports rx_loop
 ├── spectrogram.py     # Spectrogram image rendering (computation via hubble-satnet-decoder)
 ├── processor.py       # Processing loop (runs in separate OS process)
+├── hitl.py            # Posts decoded packets to the HITL log harvester
 ├── app.py             # Flask app, RX/TX routes, API endpoints, orchestration
 ├── templates/
 │   └── index.html     # Dashboard HTML
@@ -99,6 +100,8 @@ dependencies and their build steps.
 | `SDR_TYPE` | `pluto` | SDR backend: `pluto` or `bladerf` |
 | `PLUTO_URI` | `ip:192.168.2.1` | PlutoSDR connection URI (e.g. `ip:192.168.2.1` or `usb:`) |
 | `BLADERF_SERIAL` | *(empty)* | Optional bladeRF serial number for multi-device setups |
+| `HITL_ANNOTATE` | *(off)* | `1` posts every decoded phy v1 packet to the HITL log harvester (see [HITL harvester annotations](#hitl-harvester-annotations)) |
+| `HITL_HARVESTER_SOCKET` | `/run/hitl/harvester.sock` | The harvester's Unix socket |
 
 ---
 
@@ -139,25 +142,30 @@ docker build -t sdr-docker .
 
 ### 3. Run
 
+Always pass `--init` (Compose: `init: true`). The app's PID 1 is a small
+supervisor (`run_stream.py`) that restarts it when the SDR drops; it doesn't
+reap processes it didn't start, so a worker process left behind by a crash
+would stay a zombie. `--init` makes Docker's `tini` PID 1, which reaps them.
+
 #### PlutoSDR over Ethernet (default)
 
 No special flags needed — the container reaches Pluto at `192.168.2.1` via the
 host network stack:
 
 ```shell
-docker run --restart unless-stopped -d -p 8050:8050 sdr-docker
+docker run --init --restart unless-stopped -d -p 8050:8050 sdr-docker
 ```
 
 Or use the pre-built image from GitHub Container Registry:
 
 ```shell
-docker run --restart unless-stopped -d -p 8050:8050 ghcr.io/hubblenetwork/sdr-docker:latest
+docker run --init --restart unless-stopped -d -p 8050:8050 ghcr.io/hubblenetwork/sdr-docker:latest
 ```
 
 To use a different Pluto IP:
 
 ```shell
-docker run --restart unless-stopped -d -p 8050:8050 \
+docker run --init --restart unless-stopped -d -p 8050:8050 \
   -e PLUTO_URI=ip:192.168.3.1 sdr-docker
 ```
 
@@ -166,7 +174,7 @@ docker run --restart unless-stopped -d -p 8050:8050 \
 Pass the USB bus into the container:
 
 ```shell
-docker run --restart unless-stopped -d -p 8050:8050 \
+docker run --init --restart unless-stopped -d -p 8050:8050 \
   --privileged \
   -e PLUTO_URI=usb: \
   sdr-docker
@@ -175,7 +183,7 @@ docker run --restart unless-stopped -d -p 8050:8050 \
 Or, for tighter security, map only `/dev/bus/usb`:
 
 ```shell
-docker run --restart unless-stopped -d -p 8050:8050 \
+docker run --init --restart unless-stopped -d -p 8050:8050 \
   --device=/dev/bus/usb \
   -e PLUTO_URI=usb: \
   sdr-docker
@@ -184,7 +192,7 @@ docker run --restart unless-stopped -d -p 8050:8050 \
 #### bladeRF Micro A4 (USB)
 
 ```shell
-docker run --restart unless-stopped -d -p 8050:8050 \
+docker run --init --restart unless-stopped -d -p 8050:8050 \
   --privileged \
   -e SDR_TYPE=bladerf \
   sdr-docker
@@ -575,6 +583,78 @@ curl -s http://localhost:8050/api/packets | jq 'select(.device_id == "0xBBAABB01
 watch -n 2 'curl -s http://localhost:8050/api/packets | jq .'
 ```
 
+### HITL harvester annotations
+
+On a HITL hub, the [hitl-log-harvester](https://github.com/HubbleNetwork/hitl-log-harvester)
+logs each board's serial output to the warehouse (`dw.hitl_test_runner_logs`), including
+the firmware's `HBLR1` `sat_tx` record for every satellite packet a board sends. With
+`HITL_ANNOTATE=1`, every phy v1 packet the SDR decodes is posted to the harvester's
+`POST /annotations` as a row with `kind='annotation'`, `name='sat_rx'` and
+`requester='sdr-docker'`, so each received packet can be matched to the board that sent it.
+
+Mount the harvester's socket folder into the container:
+
+```shell
+docker run --init --restart unless-stopped -d -p 8050:8050 \
+  -v /run/hitl:/run/hitl -e HITL_ANNOTATE=1 sdr-docker
+```
+
+With Compose, set `HITL_ANNOTATE=1` in the environment and uncomment the `/run/hitl`
+volume in [`compose.yml`](./compose.yml).
+
+`data` uses the device record's key names and formats, so the match is on
+`(eid, seq, tag)`, plus `ch0` against the device's `ch[0]`:
+
+| Key | Meaning |
+|-----|---------|
+| `evt` | Always `sat_rx` |
+| `seq` | Sequence number (10 bits), as the device's `seq` |
+| `eid` | Network/ephemeral ID, 8 lowercase hex digits, as the device's `eid` |
+| `tag` | Authentication tag, 8 lowercase hex digits, as the device's `tag` |
+| `ch0` | Channel of the first frame (the device's `ch[0]`) |
+| `phy_ver` | PHY version, always 1: legacy v-1 packets are not posted, since they can't match a device record |
+| `rx_start_utc` | Rough time the packet started on air, from the host clock. Late by the RX buffering latency (tens to hundreds of ms) and by any sample drop after the packet |
+| `decoded_utc` | When the decode finished |
+| `energy_db`, `freq_delta_hz`, `chipset` | Signal level, frequency offset, chipset estimate |
+| `rs_corr_header`, `rs_corr_pdu` | Reed-Solomon corrections |
+| `num_pdu_symbols`, `payload_bytes`, `payload_hex` | PDU size and payload (`payload_hex` has `2 × payload_bytes` digits) |
+| `sdr`, `center_freq_hz` | Receiver |
+
+`device` and `extra` are SUPER columns, so use dot paths rather than
+`JSON_EXTRACT_PATH_TEXT`, and quote `"tag"` (a reserved word). A sequence number wraps
+every 1024 packets, and the SDK may send the same packet (same `eid`, `seq` and `tag`)
+again 10–20 s later on other channels. So match `ch0` too and keep the time window
+narrow: the annotation is written about 0–2.5 s after the device's line. Bound both
+sides by time as well, so Redshift can skip blocks (the table is sorted by `host_rx_utc`):
+
+```sql
+SELECT tx.hostname, tx.port, tx.device.tx::INT AS tx_index,
+       tx.host_rx_utc AS tx_utc, rx.host_rx_utc AS rx_utc,
+       rx.extra.data.energy_db::FLOAT AS energy_db
+FROM dw.hitl_test_runner_logs tx
+JOIN dw.hitl_test_runner_logs rx
+  ON rx.hostname = tx.hostname
+ AND rx.kind = 'annotation'
+ AND rx.extra.name::VARCHAR = 'sat_rx'
+ AND rx.extra.data.eid::VARCHAR = tx.device.eid::VARCHAR
+ AND rx.extra.data.seq::BIGINT = tx.seq
+ AND rx.extra.data."tag"::VARCHAR = tx.device."tag"::VARCHAR
+ AND rx.extra.data.ch0::INT = tx.device.ch[0]::INT
+ AND rx.host_rx_utc BETWEEN tx.host_rx_utc - INTERVAL '3 seconds'
+                        AND tx.host_rx_utc + INTERVAL '5 seconds'
+WHERE tx.kind = 'record' AND tx.evt = 'sat_tx'
+  AND tx.host_rx_utc > DATEADD(day, -1, GETDATE())
+  AND rx.host_rx_utc > DATEADD(day, -1, GETDATE());
+```
+
+Posting runs on its own thread with a 1000-entry queue and never slows decoding. Nothing
+is retried: a post the harvester refuses, or can't take because it is down or the socket is
+missing, counts as `failed`; one that doesn't fit in a full queue counts as `dropped`. The
+first failure and the recovery are logged. `/api/status` reports `hitl_annotations`
+(`sent`, `failed`, `dropped`, `skipped` (legacy v-1 packets), `queued`, `alive` (the
+posting thread is running), `ok` (alive and the last post succeeded)), or `null` when
+annotations are off. Mock mode (`SDR_TYPE=mock`) never posts.
+
 ### TX API
 
 Full-duplex TX runs simultaneously with RX.  All TX endpoints live under `/api/tx/`.
@@ -638,10 +718,20 @@ Docker's `--restart unless-stopped` policy (or `on-failure`) automatically
 brings up a clean container, which establishes a fresh libiio context and
 reconnects.  A typical recovery cycle takes **5–10 seconds**.
 
-**Initial connection retries still work in-process** — if the SDR is not yet
-available at startup (e.g. device still booting), the code retries every few
-seconds until the device appears.  The exit-on-loss behaviour only applies
-after a successful streaming session drops.
+**Initial connection retries are bounded.** If the SDR can't be opened at
+startup (unplugged, or a PlutoSDR still booting after a replug), the app
+retries every 3 s, `SDR_OPEN_ATTEMPTS_BEFORE_RESTART` times (10, about 30 s),
+then exits with code 3 so the next attempt runs in a fresh process.  State left
+by a failed open must not block every later open: SoapyPlutoSDR, for one, keeps
+a single IIO context per process and used to reuse a context that had no
+AD9361 in it forever (the image patches this, see
+[`patches/`](./patches/)).  While no SDR is attached, the app therefore
+restarts about every 35 s.
+
+Before exiting, the app stops its worker processes (processor and renderers);
+each worker also stops by itself if the main process is gone (for example
+after a crash). Run the container with `--init` / `init: true` so those
+exited workers are reaped rather than left as zombies (see [Run](#3-run)).
 
 For native (non-Docker) usage, wrap the command in a process supervisor or a
 simple restart loop:
